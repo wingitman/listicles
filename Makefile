@@ -2,7 +2,7 @@ BINARY     := listicle
 INSTALL_DIR := $(HOME)/.local/bin
 BUILD_DIR  := bin
 
-.PHONY: all build install uninstall clean
+.PHONY: all build install uninstall clean test test-integration test-all
 
 all: build
 
@@ -63,3 +63,14 @@ uninstall:
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# Unit tests only (fast, no PTY required, safe for CI)
+test:
+	go test ./internal/... -timeout 30s
+
+# Integration tests (require a real PTY / display server)
+test-integration:
+	go test -tags integration -timeout 60s -v .
+
+# Run everything
+test-all: test test-integration
