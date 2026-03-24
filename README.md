@@ -79,6 +79,59 @@ That's it. Navigate, press Enter on a directory, and your shell's working direct
 
 ---
 
+## Uninstall
+
+### 1. Remove the binary
+
+```bash
+make uninstall
+```
+
+This removes `~/.local/bin/listicle`.
+
+### 2. Remove the shell integration
+
+Open your shell rc file and delete the two lines added by `make install`:
+
+```bash
+# bash
+nano ~/.bashrc   # or vim, etc.
+
+# zsh
+nano ~/.zshrc
+
+# fish
+nano ~/.config/fish/config.fish
+```
+
+Find and delete this block (the comment and the `source` line below it):
+
+```
+# listicle shell integration
+source /path/to/listicles/shell/listicle.bash
+```
+
+Then reload your shell:
+
+```bash
+source ~/.bashrc   # or ~/.zshrc / source ~/.config/fish/config.fish
+```
+
+### 3. Remove the config (optional)
+
+```bash
+rm -rf ~/.config/listicle
+```
+
+### 4. Remove the repo (optional)
+
+```bash
+cd ..
+rm -rf listicles/
+```
+
+---
+
 ## Shell integration explained
 
 The `l` function is a thin shell wrapper. It passes a temp file path to the binary via `--cd-file`. When you press Enter on a directory (or quit with `q`/`Esc`), listicle writes the chosen path to that file. The shell wrapper reads it and runs `cd`.

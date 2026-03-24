@@ -85,7 +85,18 @@ func (m Model) renderHeader() string {
 		badgeStr = "  " + strings.Join(badges, " ")
 	}
 
-	headerLine := ui.StylePath.Render(pathStr) + badgeStr
+	delby := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Render("delby")
+	soft := lipgloss.NewStyle().Foreground(lipgloss.Color("#5865F2")).Bold(true).Render("soft")
+	brand := " " + delby + soft + " "
+	left := ui.StylePath.Render(pathStr) + badgeStr
+	leftWidth := lipgloss.Width(left)
+	brandWidth := lipgloss.Width(brand)
+	pad := m.width - leftWidth - brandWidth
+	if pad < 1 {
+		pad = 1
+	}
+	headerLine := left + strings.Repeat(" ", pad) + brand
+
 	rule := ui.StyleMuted.Render(strings.Repeat("─", clamp(m.width, 1, 80)))
 	return headerLine + "\n" + rule
 }
