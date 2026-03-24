@@ -610,14 +610,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.exitWithoutCD()
 		}
 
-		// Confirm / Enter
+		// Confirm / Enter: cd into dir, or open file in default app
 		if matchKey(key, m.keys.confirm) {
 			e := m.selectedEntry()
 			if e != nil && e.IsDir() {
 				return m, m.exitWithDir(e.Path)
 			} else if e != nil {
-				go openDefault(e.Path, m.cfg.Apps.Opener)
-				return m, nil
+				return m, openDefaultCmd(e.Path, m.cfg.Apps.Opener)
 			}
 			return m, m.exitWithDir(m.rootDir)
 		}
@@ -1086,7 +1085,11 @@ func (m Model) openEditor(path string) tea.Cmd {
 	})
 }
 
-func openDefault(path string, opener string) {
+// openDefaultCmd opens path in the default application using tea.ExecProcess,
+// which suspends the TUI for the duration of the subprocess. This handles both
+// GUI apps (imperceptible pause) and terminal apps (e.g. less, man) correctly,
+// since the alt-screen is released while the subprocess runs and restored after.
+func openDefaultCmd(path string, opener string) tea.Cmd {
 	if opener == "" {
 		switch runtime.GOOS {
 		case "darwin":
@@ -1095,7 +1098,13 @@ func openDefault(path string, opener string) {
 			opener = "xdg-open"
 		}
 	}
-	_ = exec.Command(opener, path).Start()
+	c := exec.Command(opener, path)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return errorMsg(fmt.Sprintf("Could not open %q: %v", path, err))
+		}
+		return reloadMsg{}
+	})
 }
 
 // ─── Search ───────────────────────────────────────────────────────────────────
