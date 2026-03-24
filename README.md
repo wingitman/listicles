@@ -220,7 +220,7 @@ search        = "/"
 
 [display]
 show_hidden        = false
-default_list_mode  = "dirs"   # "dirs" or "dirs_and_files"
+default_list_mode  = "dirs_and_files"   # "dirs" or "dirs_and_files"
 search_max_results = 20
 parent_depth       = 1        # 0 = off, 1 = show immediate parent, 2+ = more ancestors
 
@@ -241,8 +241,8 @@ left          = "h"
 right         = "l"
 confirm       = "enter"
 parent        = "0"
-page_up       = "pgup"
-page_down     = "pgdown"
+page_up       = "ctrl+u"
+page_down     = "ctrl+d"
 jump_top      = "g"
 jump_bottom   = "G"
 options       = "o"
