@@ -1,6 +1,6 @@
-# listicle
+# listicles
 
-An interactive terminal file explorer. Type `listicles` (or `l` to open it, navigate with the keyboard, and press Enter to `cd` into the selected directory.
+An interactive terminal file explorer. Type `listicles` (or `l`) to open it, navigate with the keyboard, and press Enter to `cd` into the selected directory.
 
 Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss](https://github.com/charmbracelet/lipgloss).
 
@@ -26,7 +26,7 @@ cd listicles
 make install
 ```
 
-This builds the binary, copies it to `~/.local/bin/listicle`, and patches your shell rc file (`~/.bashrc`, `~/.zshrc`, `~/.config/fish/config.fish`, or `~/.config/powershell/Microsoft.PowerShell_profile.ps1`).
+This builds the binary, copies it to `~/.local/bin/listicles`, and patches your shell rc file (`~/.bashrc`, `~/.zshrc`, `~/.config/fish/config.fish`, or `~/.config/powershell/Microsoft.PowerShell_profile.ps1`).
 Then reload your shell and type `l`.
 
 ---
@@ -35,14 +35,14 @@ Then reload your shell and type `l`.
 
 ```bash
 make uninstall          # removes the binary
-rm ~/.config/listicle  # removes config (optional)
+rm ~/.config/listicles  # removes config (optional)
 ```
 
 Also open your shell rc file and remove the two lines added by `make install`:
 
 ```
-# listicle shell integration
-source /path/to/listicles/shell/listicle.bash
+# listicles shell integration
+source /path/to/listicles/shell/listicles.bash
 ```
 
 ---
@@ -100,12 +100,12 @@ Example: `system32` find file/directories containing 'system32' in this director
 
 ## Configuration
 
-Config lives at `~/.config/listicle/listicle.toml` and is created on first launch. Press `o` inside listicle to edit it.
+Config lives at `~/.config/listicles/listicles.toml` and is created on first launch. Press `o` inside listicles to edit it.
 
 ### Default config
 
 ```toml
-# listicle configuration file
+# listicles configuration file
 # Key values: use names like "up", "down", "left", "right", "enter",
 # "pgup", "pgdown", "home", "end", or single characters like "q", "j", "k".
 # To use hjkl navigation: set up="k" down="j" left="h" right="l"
@@ -182,7 +182,7 @@ search        = "/"
 ---
 
 ## Shell integration
-`l` is a shell function (not an alias or script) that passes a temp file path to the binary. When you select a directory and press Enter, listicle writes the path to that file. The function reads it and calls `cd`. This is the only way to change the parent shell's directory — a subprocess can't do it.
+`l` is a shell function (not an alias or script) that passes a temp file path to the binary. When you select a directory and press Enter, listicles writes the path to that file. The function reads it and calls `cd`. This is the only way to change the parent shell's directory — a subprocess can't do it.
 
 Same pattern as `ranger`, `nnn`, and `zoxide`.
 
@@ -192,7 +192,7 @@ Same pattern as `ranger`, `nnn`, and `zoxide`.
 # bash / zsh
 l() {
     local tmp=$(mktemp)
-    listicle --cd-file "$tmp" "$@"
+    listicles --cd-file "$tmp" "$@"
     local dir=$(cat "$tmp" 2>/dev/null)
     rm -f "$tmp"
     [ -n "$dir" ] && builtin cd "$dir"
@@ -203,7 +203,7 @@ l() {
 # fish
 function l
     set tmp (mktemp)
-    listicle --cd-file $tmp $argv
+    listicles --cd-file $tmp $argv
     set dir (cat $tmp 2>/dev/null)
     rm -f $tmp
     test -n "$dir" -a "$dir" != (pwd); and builtin cd $dir
@@ -214,21 +214,21 @@ end
 # PowerShell (pwsh)
 function l {
     $tmp = [System.IO.Path]::GetTempFileName()
-    listicle --cd-file $tmp @args
+    listicles --cd-file $tmp @args
     $dir = Get-Content $tmp -ErrorAction SilentlyContinue
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     if ($dir -and $dir -ne $PWD.Path) { Set-Location $dir }
 }
 ```
 
-**Adding support for another shell:** create a function that runs `listicle --cd-file <tmpfile>`, then reads the file and calls `cd` — that's the whole pattern. Contributions welcome.
+**Adding support for another shell:** create a function that runs `listicles --cd-file <tmpfile>`, then reads the file and calls `cd` — that's the whole pattern. Contributions welcome.
 
 ---
 
 ## Building from source
 
 ```bash
-make build    # → bin/listicle
+make build    # → bin/listicles
 make install  # build + install + patch shell rc
 make clean
 make uninstall
@@ -237,9 +237,9 @@ make uninstall
 Cross-compile:
 
 ```bash
-GOOS=darwin  GOARCH=arm64 go build -o bin/listicle-macos-arm64 .
-GOOS=linux   GOARCH=amd64 go build -o bin/listicle-linux-amd64 .
-GOOS=windows GOARCH=amd64 go build -o bin/listicle-windows.exe .
+GOOS=darwin  GOARCH=arm64 go build -o bin/listicles-macos-arm64 .
+GOOS=linux   GOARCH=amd64 go build -o bin/listicles-linux-amd64 .
+GOOS=windows GOARCH=amd64 go build -o bin/listicles-windows.exe .
 ```
 
 ---

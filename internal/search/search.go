@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/listicle/listicle/internal/fs"
+	"github.com/wingitman/listicles/internal/fs"
 )
 
 // Tools caches which fast tools are available.

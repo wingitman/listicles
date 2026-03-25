@@ -65,7 +65,7 @@ func TestDefault_FieldValues(t *testing.T) {
 
 func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "listicle.toml")
+	path := filepath.Join(dir, "listicles.toml")
 
 	if err := WriteDefault(path); err != nil {
 		t.Fatalf("WriteDefault: %v", err)
@@ -105,7 +105,7 @@ func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 
 func TestWriteDefault_ParsesCleanly(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "listicle.toml")
+	path := filepath.Join(dir, "listicles.toml")
 
 	if err := WriteDefault(path); err != nil {
 		t.Fatalf("WriteDefault: %v", err)
@@ -132,7 +132,7 @@ func TestWriteDefault_ParsesCleanly(t *testing.T) {
 
 func TestLoad_ClampMinimums(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "listicle.toml")
+	path := filepath.Join(dir, "listicles.toml")
 
 	badContent := `
 [keybinds]
@@ -192,7 +192,7 @@ parent_depth = -5
 
 func TestLoad_UnknownFieldsIgnored(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "listicle.toml")
+	path := filepath.Join(dir, "listicles.toml")
 
 	// Stale config with old vim_mode fields — BurntSushi/toml ignores unknown fields
 	stale := `
@@ -248,14 +248,14 @@ parent_depth = 1
 
 func TestConfigPath_EndsCorrectly(t *testing.T) {
 	p := ConfigPath()
-	if !strings.HasSuffix(p, filepath.Join("listicle", "listicle.toml")) {
-		t.Errorf("ConfigPath %q does not end with listicle/listicle.toml", p)
+	if !strings.HasSuffix(p, filepath.Join("listicles", "listicles.toml")) {
+		t.Errorf("ConfigPath %q does not end with listicles/listicles.toml", p)
 	}
 }
 
-func TestConfigDir_EndsWithListicle(t *testing.T) {
+func TestConfigDir_EndsWithListicles(t *testing.T) {
 	d := ConfigDir()
-	if !strings.HasSuffix(d, "listicle") {
-		t.Errorf("ConfigDir %q does not end with 'listicle'", d)
+	if !strings.HasSuffix(d, "listicles") {
+		t.Errorf("ConfigDir %q does not end with 'listicles'", d)
 	}
 }

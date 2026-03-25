@@ -1,13 +1,13 @@
-# listicle shell integration for zsh
+# listicles shell integration for zsh
 # Source this file in your ~/.zshrc:
-#   source /path/to/listicle/shell/listicle.zsh
+#   source /path/to/listicles/shell/listicles.zsh
 #
 # Or after `make install` it will be appended automatically.
 
 l() {
     local tmp
     tmp=$(mktemp)
-    listicle --cd-file "$tmp" "$@"
+    listicles --cd-file "$tmp" "$@"
     local dir
     dir=$(cat "$tmp" 2>/dev/null)
     rm -f "$tmp"

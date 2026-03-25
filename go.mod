@@ -1,4 +1,4 @@
-module github.com/listicle/listicle
+module github.com/wingitman/listicles
 
 go 1.26.1
 

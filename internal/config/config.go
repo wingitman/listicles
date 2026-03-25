@@ -100,18 +100,18 @@ func Default() *Config {
 	}
 }
 
-// ConfigDir returns the path to the listicle config directory.
+// ConfigDir returns the path to the listicles config directory.
 func ConfigDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".config", "listicle")
+	return filepath.Join(home, ".config", "listicles")
 }
 
 // ConfigPath returns the full path to the config file.
 func ConfigPath() string {
-	return filepath.Join(ConfigDir(), "listicle.toml")
+	return filepath.Join(ConfigDir(), "listicles.toml")
 }
 
 // Load reads the config file, creating it with defaults if it doesn't exist.
@@ -143,7 +143,7 @@ func Load() (*Config, error) {
 
 // WriteDefault writes the default config file to path.
 func WriteDefault(path string) error {
-	content := `# listicle configuration file
+	content := `# listicles configuration file
 # Key values: use names like "up", "down", "left", "right", "enter",
 # "pgup", "pgdown", "home", "end", or single characters like "q", "j", "k".
 # To use hjkl navigation: set up="k" down="j" left="h" right="l"

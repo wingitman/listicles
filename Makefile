@@ -1,4 +1,4 @@
-BINARY     := listicle
+BINARY     := listicles
 INSTALL_DIR := $(HOME)/.local/bin
 BUILD_DIR  := bin
 
@@ -21,51 +21,51 @@ install: build
 install-shell:
 	@# --- zsh ---
 	@if [ -f "$(HOME)/.zshrc" ]; then \
-		if ! grep -q "listicle shell integration" "$(HOME)/.zshrc"; then \
+		if ! grep -q "listicles shell integration" "$(HOME)/.zshrc"; then \
 			echo "" >> "$(HOME)/.zshrc"; \
-			echo "# listicle shell integration" >> "$(HOME)/.zshrc"; \
-			echo "source $(CURDIR)/shell/listicle.zsh" >> "$(HOME)/.zshrc"; \
-			echo "Added listicle to ~/.zshrc"; \
+			echo "# listicles shell integration" >> "$(HOME)/.zshrc"; \
+			echo "source $(CURDIR)/shell/listicles.zsh" >> "$(HOME)/.zshrc"; \
+			echo "Added listicles to ~/.zshrc"; \
 		else \
-			echo "~/.zshrc already has listicle integration"; \
+			echo "~/.zshrc already has listicles integration"; \
 		fi \
 	fi
 	@# --- bash ---
 	@if [ -f "$(HOME)/.bashrc" ]; then \
-		if ! grep -q "listicle shell integration" "$(HOME)/.bashrc"; then \
+		if ! grep -q "listicles shell integration" "$(HOME)/.bashrc"; then \
 			echo "" >> "$(HOME)/.bashrc"; \
-			echo "# listicle shell integration" >> "$(HOME)/.bashrc"; \
-			echo "source $(CURDIR)/shell/listicle.bash" >> "$(HOME)/.bashrc"; \
-			echo "Added listicle to ~/.bashrc"; \
+			echo "# listicles shell integration" >> "$(HOME)/.bashrc"; \
+			echo "source $(CURDIR)/shell/listicles.bash" >> "$(HOME)/.bashrc"; \
+			echo "Added listicles to ~/.bashrc"; \
 		else \
-			echo "~/.bashrc already has listicle integration"; \
+			echo "~/.bashrc already has listicles integration"; \
 		fi \
 	fi
 	@# --- fish ---
 	@if [ -f "$(HOME)/.config/fish/config.fish" ]; then \
-		if ! grep -q "listicle shell integration" "$(HOME)/.config/fish/config.fish"; then \
+		if ! grep -q "listicles shell integration" "$(HOME)/.config/fish/config.fish"; then \
 			echo "" >> "$(HOME)/.config/fish/config.fish"; \
-			echo "# listicle shell integration" >> "$(HOME)/.config/fish/config.fish"; \
-			echo "source $(CURDIR)/shell/listicle.fish" >> "$(HOME)/.config/fish/config.fish"; \
-			echo "Added listicle to ~/.config/fish/config.fish"; \
+			echo "# listicles shell integration" >> "$(HOME)/.config/fish/config.fish"; \
+			echo "source $(CURDIR)/shell/listicles.fish" >> "$(HOME)/.config/fish/config.fish"; \
+			echo "Added listicles to ~/.config/fish/config.fish"; \
 		else \
-			echo "~/.config/fish/config.fish already has listicle integration"; \
+			echo "~/.config/fish/config.fish already has listicles integration"; \
 		fi \
 	fi
 	@# --- powershell ---
 	@if [ -f "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1" ]; then \
-		if ! grep -q "listicle shell integration" "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; then \
+		if ! grep -q "listicles shell integration" "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; then \
 			echo "" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
-			echo "# listicle shell integration" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
-			echo ". $(CURDIR)/shell/listicle.ps1" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
-			echo "Added listicle to PowerShell profile"; \
+			echo "# listicles shell integration" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
+			echo ". $(CURDIR)/shell/listicles.ps1" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
+			echo "Added listicles to PowerShell profile"; \
 		else \
-			echo "PowerShell profile already has listicle integration"; \
+			echo "PowerShell profile already has listicles integration"; \
 		fi \
 	fi
 	@echo ""
 	@echo "Reload your shell or run: source ~/.zshrc  (or ~/.bashrc / fish / . \$$PROFILE for pwsh)"
-	@echo "Then type 'l' to launch listicle."
+	@echo "Then type 'l' to launch listicles."
 
 uninstall:
 	@rm -f $(INSTALL_DIR)/$(BINARY)

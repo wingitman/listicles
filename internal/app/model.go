@@ -14,9 +14,9 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/listicle/listicle/internal/config"
-	"github.com/listicle/listicle/internal/fs"
-	"github.com/listicle/listicle/internal/search"
+	"github.com/wingitman/listicles/internal/config"
+	"github.com/wingitman/listicles/internal/fs"
+	"github.com/wingitman/listicles/internal/search"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -83,8 +83,9 @@ type TreeNode struct {
 // ─── Model ────────────────────────────────────────────────────────────────────
 
 type Model struct {
-	cfg    *config.Config
-	cdFile string
+	cfg      *config.Config
+	cdFile   string
+	openFile string
 
 	// Tree state
 	rootDir string
@@ -198,7 +199,7 @@ func resolveKeys(k config.Keybinds) resolvedKeys {
 
 // ─── Constructor ─────────────────────────────────────────────────────────────
 
-func New(cfg *config.Config, startDir string, cdFile string) (*Model, error) {
+func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*Model, error) {
 	if startDir == "" {
 		var err error
 		startDir, err = os.Getwd()
@@ -218,6 +219,7 @@ func New(cfg *config.Config, startDir string, cdFile string) (*Model, error) {
 	m := &Model{
 		cfg:         cfg,
 		cdFile:      cdFile,
+		openFile:    openFile,
 		rootDir:     startDir,
 		listMode:    listMode,
 		showHidden:  cfg.Display.ShowHidden,
@@ -429,6 +431,18 @@ func (m *Model) exitWithDir(dir string) tea.Cmd {
 	return tea.Quit
 }
 
+// exitWithFile writes the selected file path to openFile (for editor
+// integrations) and the file's parent directory to cdFile (for shell cd).
+func (m *Model) exitWithFile(path string) tea.Cmd {
+	if m.openFile != "" {
+		_ = os.WriteFile(m.openFile, []byte(path), 0600)
+	}
+	if m.cdFile != "" {
+		_ = os.WriteFile(m.cdFile, []byte(filepath.Dir(path)), 0600)
+	}
+	return tea.Quit
+}
+
 func (m *Model) exitWithoutCD() tea.Cmd { return tea.Quit }
 
 func matchKey(pressed, binding string) bool {
@@ -589,6 +603,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.mode = ModeNormal
 					}
 				} else {
+					if m.openFile != "" {
+						return m, m.exitWithFile(e.Path)
+					}
 					return m, m.exitWithDir(filepath.Dir(e.Path))
 				}
 				return m, nil
@@ -610,12 +627,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.exitWithoutCD()
 		}
 
-		// Confirm / Enter: cd into dir, or open file in default app
+		// Confirm / Enter: cd into dir, or open file in editor/default app
 		if matchKey(key, m.keys.confirm) {
 			e := m.selectedEntry()
 			if e != nil && e.IsDir() {
 				return m, m.exitWithDir(e.Path)
 			} else if e != nil {
+				if m.openFile != "" {
+					return m, m.exitWithFile(e.Path)
+				}
 				return m, openDefaultCmd(e.Path, m.cfg.Apps.Opener)
 			}
 			return m, m.exitWithDir(m.rootDir)

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/listicle/listicle/internal/config"
-	"github.com/listicle/listicle/internal/fs"
+	"github.com/wingitman/listicles/internal/config"
+	"github.com/wingitman/listicles/internal/fs"
 )
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -515,7 +515,7 @@ func TestView_SearchMode_ShowsSearchBar(t *testing.T) {
 	m.mode = ModeSearch
 
 	// Need a real textinput for the search bar
-	from, _ := New(cfg, "/tmp", "")
+	from, _ := New(cfg, "/tmp", "", "")
 	from.width = 80
 	from.height = 40
 	from.mode = ModeSearch

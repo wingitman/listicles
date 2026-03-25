@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/listicle/listicle/internal/config"
+	"github.com/wingitman/listicles/internal/config"
 )
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -15,7 +15,7 @@ import (
 func newModel(t *testing.T, dir string) *Model {
 	t.Helper()
 	cfg := config.Default()
-	m, err := New(cfg, dir, "")
+	m, err := New(cfg, dir, "", "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestCurrentOperationDir_OnFile(t *testing.T) {
 	_, root := newModelWithDirsAndFiles(t, nil, []string{"file.txt"})
 	cfg := config.Default()
 	cfg.Display.DefaultListMode = "dirs_and_files"
-	m2, err := New(cfg, root, "")
+	m2, err := New(cfg, root, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

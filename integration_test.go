@@ -12,8 +12,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
-	"github.com/listicle/listicle/internal/app"
-	"github.com/listicle/listicle/internal/config"
+	"github.com/wingitman/listicles/internal/app"
+	"github.com/wingitman/listicles/internal/config"
 )
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -30,11 +30,11 @@ func newTestDir(t *testing.T, dirs ...string) string {
 	return root
 }
 
-// newTestModel creates a BubbleTea TestModel from a listicle app.Model.
+// newTestModel creates a BubbleTea TestModel from a listicles app.Model.
 func newTestModel(t *testing.T, dir string) *teatest.TestModel {
 	t.Helper()
 	cfg := config.Default()
-	m, err := app.New(cfg, dir, "")
+	m, err := app.New(cfg, dir, "", "")
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
 	}

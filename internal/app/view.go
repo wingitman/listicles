@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/listicle/listicle/internal/fs"
-	"github.com/listicle/listicle/internal/ui"
+	"github.com/wingitman/listicles/internal/fs"
+	"github.com/wingitman/listicles/internal/ui"
 )
 
 // ─── Top-level view ───────────────────────────────────────────────────────────
