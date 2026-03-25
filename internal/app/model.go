@@ -847,17 +847,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Edit in $EDITOR
+		// Edit in $EDITOR (or open in Neovim when running as a plugin)
 		if matchKey(key, m.keys.edit) {
 			e := m.selectedEntry()
 			if e != nil {
+				if m.openFile != "" {
+					return m, m.exitWithFile(e.Path)
+				}
 				return m, m.openEditor(e.Path)
 			}
 			return m, nil
 		}
 
-		// Options: open config in editor
+		// Options: open config in editor (or open in Neovim when running as a plugin)
 		if matchKey(key, m.keys.options) {
+			if m.openFile != "" {
+				return m, m.exitWithFile(config.ConfigPath())
+			}
 			return m, m.openEditor(config.ConfigPath())
 		}
 	}
