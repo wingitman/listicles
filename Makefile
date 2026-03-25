@@ -52,8 +52,19 @@ install-shell:
 			echo "~/.config/fish/config.fish already has listicle integration"; \
 		fi \
 	fi
+	@# --- powershell ---
+	@if [ -f "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1" ]; then \
+		if ! grep -q "listicle shell integration" "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; then \
+			echo "" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
+			echo "# listicle shell integration" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
+			echo ". $(CURDIR)/shell/listicle.ps1" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
+			echo "Added listicle to PowerShell profile"; \
+		else \
+			echo "PowerShell profile already has listicle integration"; \
+		fi \
+	fi
 	@echo ""
-	@echo "Reload your shell or run: source ~/.zshrc  (or ~/.bashrc / fish)"
+	@echo "Reload your shell or run: source ~/.zshrc  (or ~/.bashrc / fish / . \$$PROFILE for pwsh)"
 	@echo "Then type 'l' to launch listicle."
 
 uninstall:

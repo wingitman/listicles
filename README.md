@@ -1,6 +1,6 @@
 # listicle
 
-An interactive terminal file explorer. Type `l` to launch it from any directory, navigate with keyboard shortcuts, and press Enter to `cd` into the selected directory.
+An interactive terminal file explorer. Type `listicles` (or `l` to open it, navigate with the keyboard, and press Enter to `cd` into the selected directory.
 
 Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss](https://github.com/charmbracelet/lipgloss).
 
@@ -8,156 +8,41 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss
 
 ---
 
-## Features
-
-- **Inline tree navigation** — expand and collapse subdirectories in place; siblings stay visible
-- **Live search filter** — press `/` and type to filter the current directory instantly; press Enter to escalate to a full recursive or content search via `fd`/`rg` (falls back to `find`/`grep`)
-- **Multi-digit jump** — type `19` within 500ms to jump directly to item 19 at the current depth
-- **Page jump** — logarithmically scaled page up/down that adapts to the number of visible items
-- **Yank / cut / paste** — filesystem copy and move with confirmation
-- **Copy path to clipboard** — copies the absolute path of the selected item to the system clipboard
-- **Add / rename / delete** — create files and directories, rename, and delete with confirmation
-- **Open in default app** — press Enter on a file to open it with `xdg-open`/`open`
-- **Edit in `$EDITOR`** — open any file directly in your configured editor
-- **Detail toggle** — cycle through file count, size, and full path displays
-- **Greyed parent crumbs** — configurable number of ancestor directories shown above the tree
-- **Shell `cd` integration** — pressing Enter on a directory actually changes your shell's working directory
-- **Fully remappable keybinds** — every key is configurable via `~/.config/listicle/listicle.toml`
-- **Hidden file toggle** — show or hide dotfiles on demand
-
----
-
 ## Requirements
 
-- Go 1.21+ (to build from source)
-- A modern terminal with colour support (kitty, alacritty, ghostty, iTerm2, Windows Terminal, etc.)
-- `bash`, `zsh`, or `fish` shell
+- Go 1.21+ (to build)
+- A terminal with colour support
+- `bash`, `zsh`, `fish`, or `powershell (pwsh)`
 
-**Optional but recommended (for faster search):**
-- [`fd`](https://github.com/sharkdp/fd) — fast filename search
-- [`rg`](https://github.com/BurntSushi/ripgrep) — fast content search
+**Optional (faster search):** [`fd`](https://github.com/sharkdp/fd) and [`rg`](https://github.com/BurntSushi/ripgrep)
 
 ---
 
-## Installation
-
-### 1. Clone and build
+## Install
 
 ```bash
 git clone https://github.com/wingitman/listicles.git
 cd listicles
-make build
-```
-
-This produces `bin/listicle` (a single ~4 MB binary with no runtime dependencies).
-
-### 2. Install the binary and shell integration
-
-```bash
 make install
 ```
 
-This copies `bin/listicle` to `~/.local/bin/listicle` and appends the shell wrapper function to your `~/.bashrc`, `~/.zshrc`, and/or `~/.config/fish/config.fish` depending on which exist.
-
-Then reload your shell:
-
-```bash
-# bash / zsh
-source ~/.bashrc   # or ~/.zshrc
-
-# fish
-source ~/.config/fish/config.fish
-```
-
-### 3. Use it
-
-```bash
-l
-```
-
-That's it. Navigate, press Enter on a directory, and your shell's working directory changes.
+This builds the binary, copies it to `~/.local/bin/listicle`, and patches your shell rc file (`~/.bashrc`, `~/.zshrc`, `~/.config/fish/config.fish`, or `~/.config/powershell/Microsoft.PowerShell_profile.ps1`).
+Then reload your shell and type `l`.
 
 ---
 
 ## Uninstall
 
-### 1. Remove the binary
-
 ```bash
-make uninstall
+make uninstall          # removes the binary
+rm ~/.config/listicle  # removes config (optional)
 ```
 
-This removes `~/.local/bin/listicle`.
-
-### 2. Remove the shell integration
-
-Open your shell rc file and delete the two lines added by `make install`:
-
-```bash
-# bash
-nano ~/.bashrc   # or vim, etc.
-
-# zsh
-nano ~/.zshrc
-
-# fish
-nano ~/.config/fish/config.fish
-```
-
-Find and delete this block (the comment and the `source` line below it):
+Also open your shell rc file and remove the two lines added by `make install`:
 
 ```
 # listicle shell integration
 source /path/to/listicles/shell/listicle.bash
-```
-
-Then reload your shell:
-
-```bash
-source ~/.bashrc   # or ~/.zshrc / source ~/.config/fish/config.fish
-```
-
-### 3. Remove the config (optional)
-
-```bash
-rm -rf ~/.config/listicle
-```
-
-### 4. Remove the repo (optional)
-
-```bash
-cd ..
-rm -rf listicles/
-```
-
----
-
-## Shell integration explained
-
-The `l` function is a thin shell wrapper. It passes a temp file path to the binary via `--cd-file`. When you press Enter on a directory (or quit with `q`/`Esc`), listicle writes the chosen path to that file. The shell wrapper reads it and runs `cd`.
-
-This is the same pattern used by tools like `ranger`, `nnn`, and `zoxide`.
-
-**Manual setup** (if `make install` didn't cover your shell):
-
-```bash
-# bash / zsh — add to ~/.bashrc or ~/.zshrc
-l() {
-    local tmp=$(mktemp)
-    listicle --cd-file "$tmp" "$@"
-    local dir=$(cat "$tmp" 2>/dev/null)
-    rm -f "$tmp"
-    [ -n "$dir" ] && builtin cd "$dir"
-}
-
-# fish — add to ~/.config/fish/config.fish
-function l
-    set tmp (mktemp)
-    listicle --cd-file $tmp $argv
-    set dir (cat $tmp 2>/dev/null)
-    rm -f $tmp
-    test -n "$dir" -a "$dir" != (pwd); and builtin cd $dir
-end
 ```
 
 ---
@@ -170,72 +55,52 @@ All keybinds are configurable. These are the defaults.
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` | Move selection up / down |
+| `↑` / `↓` | Move up / down |
 | `←` / `→` | Collapse / expand directory |
-| `Enter` | `cd` to selected directory, or open file in default app |
-| `0` | Go to parent directory |
-| `Home` | Jump to first item |
-| `End` | Jump to last item |
-| `PgUp` / `PgDn` | Page up / down (logarithmically scaled) |
-| `1`–`9` (or multi-digit, e.g. `1` then `9`) | Jump to Nth item at current depth and expand it |
+| `←` / `0` | Go to parent directory |
+| `Home` / `End` | Jump to first / last item |
+| `PgUp` / `PgDn` | Page up / down |
+| `1`–`9` (multi-digit supported) | Jump to Nth item at current depth |
+| `Enter` | `cd` to directory, or open file |
 
-**Multi-digit jump:** type digits within 500ms of each other. The number being typed is shown in the header (`→ 19`). The jump always operates at the depth of the currently selected item.
-
-**Page jump scaling:** the jump size is `round(log₂(N))` where N is the number of visible items. This means small directories jump fewer rows and large directories jump more.
+Multi-digit jump: type digits within 500ms. The number being typed shows in the header (`→ 19`).
 
 ### File operations
 
-| Key | Action |
-|-----|--------|
-| `a` | Add a file or directory (end name with `/` for directory) |
-| `d` | Delete selected item (confirmation required) |
-| `r` | Rename selected item (confirmation required) |
-| `y` | Yank (mark for copy). Press `y` again on the same item to clear. |
-| `x` | Cut (mark for move). Press `x` again to clear. |
-| `p` | Paste yanked/cut item into current directory (confirmation required) |
-| `Y` | Copy absolute path of selected item to system clipboard |
-| `e` | Open selected file in `$EDITOR` |
+| Key | Action | Cofirmation |
+|-----|--------|-------------|
+| `a` | Add file or directory (end with `/` for directory) | |
+| `d` | Delete | _Yes_ |
+| `r` | Rename | _Yes_ |
+| `y` | Yank (copy) file/directory |
+| `Y` | Copy absolute path to clipboard |
+| `x` | Cut |
+| `p` | Paste into current directory | _Yes_|
+| `e` | Open in `$EDITOR` |
 
-### Display
-
-| Key | Action |
-|-----|--------|
-| `f` | Toggle between directories-only and directories+files |
-| `.` | Toggle hidden files (dotfiles) |
-| `i` | Cycle detail display: none → file/dir count → size → full path |
-
-### Search
+### Display & search
 
 | Key | Action |
 |-----|--------|
-| `/` | Open search bar (filters current directory live as you type) |
-| `Enter` (in search) | Run full search via `fd` / `rg` (supports flags below) |
-| `Esc` (in search) | Cancel and restore previous listing |
+| `f` | Toggle directories-only / directories+files |
+| `.` | Toggle hidden files |
+| `i` | Cycle detail: none → count → size → full path |
+| `/` | Search (live filter as you type) |
+| `Enter` (in search) | Run full search via `fd`/`rg` |
+| `Esc` (in search) | Cancel |
+| `o` | Open config in `$EDITOR` |
+| `q` / `Esc` | Quit |
 
-**Search flags** (type anywhere in the query):
-
-| Flag | Meaning |
-|------|---------|
-| `-r` | Recursive — search all subdirectories |
-| `-t` | Text mode — search file contents instead of names |
-| `-rt` or `-tr` | Both recursive and text mode |
-
-Example: typing `main -rt` will search recursively for files containing the text `main`.
-
-If `fd` is installed it is used for name searches; if `rg` is installed it is used for content searches. Both fall back to `find` and `grep` otherwise.
-
-### Other
-
-| Key | Action |
-|-----|--------|
-| `o` | Open `~/.config/listicle/listicle.toml` in `$EDITOR` |
-| `q` / `Esc` | Quit without changing directory |
+**Search flags** (add to your query): `-r` recursive, `-t` search file contents (or `-rt` for both).
+Example: `main -rt` finds files containing the word `main`, recursively.
+Example: `.conf -r` find files/directories containing '.conf', recursively. 
+Example: `system32` find file/directories containing 'system32' in this directory
 
 ---
 
 ## Configuration
 
-On first launch, `~/.config/listicle/listicle.toml` is created with all defaults. Edit it with `o` from inside listicle, or directly.
+Config lives at `~/.config/listicle/listicle.toml` and is created on first launch. Press `o` inside listicle to edit it.
 
 ### Default config
 
@@ -314,32 +179,49 @@ toggle_hidden = "H"
 search        = "/"
 ```
 
-### `parent_depth` examples
+---
 
-```toml
-parent_depth = 0   # no crumbs — clean minimal view
-parent_depth = 1   # show immediate parent (default)
-parent_depth = 3   # show three levels of ancestors
+## Shell integration
+`l` is a shell function (not an alias or script) that passes a temp file path to the binary. When you select a directory and press Enter, listicle writes the path to that file. The function reads it and calls `cd`. This is the only way to change the parent shell's directory — a subprocess can't do it.
+
+Same pattern as `ranger`, `nnn`, and `zoxide`.
+
+**Manual setup** (if `make install` didn't cover your shell):
+
+```bash
+# bash / zsh
+l() {
+    local tmp=$(mktemp)
+    listicle --cd-file "$tmp" "$@"
+    local dir=$(cat "$tmp" 2>/dev/null)
+    rm -f "$tmp"
+    [ -n "$dir" ] && builtin cd "$dir"
+}
 ```
 
-With `parent_depth = 1` and the cursor inside `listicle/internal/`:
-
+```fish
+# fish
+function l
+    set tmp (mktemp)
+    listicle --cd-file $tmp $argv
+    set dir (cat $tmp 2>/dev/null)
+    rm -f $tmp
+    test -n "$dir" -a "$dir" != (pwd); and builtin cd $dir
+end
 ```
-  Work/              ← greyed ancestor
-    listicle/        ← root label
- 1 ▶ app/
- 2 ▶ config/
- 3 ▶ fs/
- 4 ▶ search/
- 5 ▶ ui/
+
+```powershell
+# PowerShell (pwsh)
+function l {
+    $tmp = [System.IO.Path]::GetTempFileName()
+    listicle --cd-file $tmp @args
+    $dir = Get-Content $tmp -ErrorAction SilentlyContinue
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    if ($dir -and $dir -ne $PWD.Path) { Set-Location $dir }
+}
 ```
 
-### `default_list_mode`
-
-```toml
-default_list_mode = "dirs"            # show directories only (default)
-default_list_mode = "dirs_and_files"  # show files too on startup
-```
+**Adding support for another shell:** create a function that runs `listicle --cd-file <tmpfile>`, then reads the file and calls `cd` — that's the whole pattern. Contributions welcome.
 
 ---
 
@@ -347,12 +229,12 @@ default_list_mode = "dirs_and_files"  # show files too on startup
 
 ```bash
 make build    # → bin/listicle
-make install  # build + install to ~/.local/bin + patch shell rc files
-make clean    # remove bin/
+make install  # build + install + patch shell rc
+make clean
 make uninstall
 ```
 
-**Cross-compile:**
+Cross-compile:
 
 ```bash
 GOOS=darwin  GOARCH=arm64 go build -o bin/listicle-macos-arm64 .
