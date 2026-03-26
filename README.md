@@ -298,6 +298,9 @@ GOOS=windows GOARCH=amd64 go build -o bin/listicles-windows.exe .
 
 ---
 
+## Support
+<a href='https://ko-fi.com/W7W21WP5L7' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi4.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
