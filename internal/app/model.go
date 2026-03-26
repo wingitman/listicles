@@ -1091,7 +1091,7 @@ func (m Model) openEditor(path string) tea.Cmd {
 		editor = os.Getenv("VISUAL")
 	}
 	if editor == "" {
-		for _, e := range []string{"nano", "vi", "vim"} {
+		for _, e := range []string{"nano", "vi", "vim", "nvim", "code", "notepad.exe"} {
 			if _, err := exec.LookPath(e); err == nil {
 				editor = e
 				break
@@ -1100,7 +1100,7 @@ func (m Model) openEditor(path string) tea.Cmd {
 	}
 	if editor == "" {
 		return func() tea.Msg {
-			return errorMsg("No editor found. Set $EDITOR or apps.editor in config.")
+			return errorMsg("No editor found. Set $EDITOR or apps.editor in config.\nConfig: " + config.ConfigPath())
 		}
 	}
 	c := exec.Command(editor, path)

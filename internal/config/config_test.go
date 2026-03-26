@@ -248,8 +248,9 @@ parent_depth = 1
 
 func TestConfigPath_EndsCorrectly(t *testing.T) {
 	p := ConfigPath()
-	if !strings.HasSuffix(p, filepath.Join("listicles", "listicles.toml")) {
-		t.Errorf("ConfigPath %q does not end with listicles/listicles.toml", p)
+	want := filepath.Join("listicles", "listicles.toml")
+	if !strings.HasSuffix(p, want) {
+		t.Errorf("ConfigPath %q does not end with %q", p, want)
 	}
 }
 

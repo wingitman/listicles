@@ -137,7 +137,13 @@ Example: `system32` find file/directories containing 'system32' in this director
 
 ## Configuration
 
-Config lives at `~/.config/listicles/listicles.toml` and is created on first launch. Press `o` inside listicles to edit it.
+The config file is created automatically on first launch. Press `o` inside listicles to open it in your editor.
+
+| OS | Path |
+|---|---|
+| Windows | `%APPDATA%\listicles\listicles.toml` (e.g. `C:\Users\you\AppData\Roaming\listicles\listicles.toml`) |
+| macOS | `~/Library/Application Support/listicles/listicles.toml` |
+| Linux | `~/.config/listicles/listicles.toml` |
 
 ### Default config
 

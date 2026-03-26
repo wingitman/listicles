@@ -100,13 +100,23 @@ func Default() *Config {
 	}
 }
 
-// ConfigDir returns the path to the listicles config directory.
+// ConfigDir returns the platform-appropriate path to the listicles config directory.
+//
+// os.UserConfigDir() returns the right base per OS:
+//   - Windows: %APPDATA%  (e.g. C:\Users\wing\AppData\Roaming)
+//   - macOS:   ~/Library/Application Support
+//   - Linux:   ~/.config  (XDG_CONFIG_HOME if set, else ~/.config)
 func ConfigDir() string {
-	home, err := os.UserHomeDir()
+	base, err := os.UserConfigDir()
 	if err != nil {
-		return ""
+		// Fallback: construct manually from home dir
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return ""
+		}
+		return filepath.Join(home, ".config", "listicles")
 	}
-	return filepath.Join(home, ".config", "listicles")
+	return filepath.Join(base, "listicles")
 }
 
 // ConfigPath returns the full path to the config file.
@@ -114,10 +124,34 @@ func ConfigPath() string {
 	return filepath.Join(ConfigDir(), "listicles.toml")
 }
 
+// resolvePath returns the config file path to use. It checks the primary
+// (OS-native) path first, then falls back to the legacy Unix-style path
+// (~/.config/listicles/listicles.toml) for users who already have a config
+// there from an earlier install. Returns the primary path when neither exists
+// so that WriteDefault writes to the correct location.
+func resolvePath() string {
+	primary := ConfigPath()
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+
+	// Legacy path: always ~/.config/listicles/listicles.toml
+	if home, err := os.UserHomeDir(); err == nil {
+		legacy := filepath.Join(home, ".config", "listicles", "listicles.toml")
+		if legacy != primary {
+			if _, err := os.Stat(legacy); err == nil {
+				return legacy
+			}
+		}
+	}
+
+	return primary
+}
+
 // Load reads the config file, creating it with defaults if it doesn't exist.
 func Load() (*Config, error) {
 	cfg := Default()
-	path := ConfigPath()
+	path := resolvePath()
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.MkdirAll(ConfigDir(), 0755); err != nil {

@@ -139,6 +139,9 @@ if ($profileContent -and $profileContent -match [regex]::Escape($marker)) {
 # ---------------------------------------------------------------------------
 # 6. Done
 # ---------------------------------------------------------------------------
+$ConfigDir  = Join-Path ([System.Environment]::GetFolderPath('ApplicationData')) 'listicles'
+$ConfigFile = Join-Path $ConfigDir 'listicles.toml'
+
 Write-Host ''
 Write-Host '  listicles installed successfully!' -ForegroundColor Green
 Write-Host ''
@@ -147,6 +150,9 @@ Write-Host '    l' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  Or reload your profile in this session:' -ForegroundColor White
 Write-Host '    . $PROFILE' -ForegroundColor Cyan
+Write-Host ''
+Write-Host '  Config file (created on first launch):' -ForegroundColor White
+Write-Host "    $ConfigFile" -ForegroundColor Cyan
 Write-Host ''
 Write-Note "  Tip: if you get an 'execution policy' error, run once as your user:"
 Write-Note '    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned'
