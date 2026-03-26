@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"strconv"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/wingitman/listicles/internal/fs"
@@ -310,8 +311,10 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 
 	// Number label: only for nodes at the focused depth
 	numLabel := " · "
+	digits := len(strconv.Itoa(siblingIdx + 1))
+	strIndent := strings.Repeat(" ", 3-digits)
 	if node.Depth == focusedDepth && siblingIdx < 99 {
-		numLabel = fmt.Sprintf(" %d ", siblingIdx+1)
+		numLabel = fmt.Sprintf(" %d%v", siblingIdx+1, strIndent)
 	}
 
 	// Indent

@@ -716,7 +716,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.digitBuffer += key
-			return m, tea.Tick(500*time.Millisecond, func(_ time.Time) tea.Msg {
+			return m, tea.Tick(400*time.Millisecond, func(_ time.Time) tea.Msg {
 				return digitTimeoutMsg{}
 			})
 		}
