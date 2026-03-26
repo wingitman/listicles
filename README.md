@@ -54,6 +54,9 @@ Then reload your shell and type `l`.
 
 ---
 
+## Neovim
+Use [listicles.nvim](https://github.com/wingitman/listicles.nvim) in Neovim!
+
 ## Uninstall
 
 ### Windows
