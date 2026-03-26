@@ -601,6 +601,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.mode = ModeError
 					} else {
 						m.mode = ModeNormal
+						m.exitWithDir(e.Path)
 					}
 				} else {
 					if m.openFile != "" {
