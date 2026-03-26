@@ -21,6 +21,11 @@ install: build
 install-shell:
 	@# --- zsh ---
 	@if [ -f "$(HOME)/.zshrc" ]; then \
+		if ! grep -q '\.local/bin' "$(HOME)/.zshrc"; then \
+			echo "" >> "$(HOME)/.zshrc"; \
+			echo 'export PATH="$$HOME/.local/bin:$$PATH"' >> "$(HOME)/.zshrc"; \
+			echo "Added ~/.local/bin to PATH in ~/.zshrc"; \
+		fi; \
 		if ! grep -q "listicles shell integration" "$(HOME)/.zshrc"; then \
 			echo "" >> "$(HOME)/.zshrc"; \
 			echo "# listicles shell integration" >> "$(HOME)/.zshrc"; \
@@ -32,6 +37,11 @@ install-shell:
 	fi
 	@# --- bash ---
 	@if [ -f "$(HOME)/.bashrc" ]; then \
+		if ! grep -q '\.local/bin' "$(HOME)/.bashrc"; then \
+			echo "" >> "$(HOME)/.bashrc"; \
+			echo 'export PATH="$$HOME/.local/bin:$$PATH"' >> "$(HOME)/.bashrc"; \
+			echo "Added ~/.local/bin to PATH in ~/.bashrc"; \
+		fi; \
 		if ! grep -q "listicles shell integration" "$(HOME)/.bashrc"; then \
 			echo "" >> "$(HOME)/.bashrc"; \
 			echo "# listicles shell integration" >> "$(HOME)/.bashrc"; \
@@ -43,6 +53,11 @@ install-shell:
 	fi
 	@# --- fish ---
 	@if [ -f "$(HOME)/.config/fish/config.fish" ]; then \
+		if ! grep -q '\.local/bin' "$(HOME)/.config/fish/config.fish"; then \
+			echo "" >> "$(HOME)/.config/fish/config.fish"; \
+			echo "fish_add_path \$$HOME/.local/bin" >> "$(HOME)/.config/fish/config.fish"; \
+			echo "Added ~/.local/bin to PATH in ~/.config/fish/config.fish"; \
+		fi; \
 		if ! grep -q "listicles shell integration" "$(HOME)/.config/fish/config.fish"; then \
 			echo "" >> "$(HOME)/.config/fish/config.fish"; \
 			echo "# listicles shell integration" >> "$(HOME)/.config/fish/config.fish"; \
@@ -54,6 +69,11 @@ install-shell:
 	fi
 	@# --- powershell ---
 	@if [ -f "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1" ]; then \
+		if ! grep -q '\.local/bin' "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; then \
+			echo "" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
+			echo '$$env:PATH = "$$HOME\.local\bin;$$env:PATH"' >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
+			echo "Added ~/.local/bin to PATH in PowerShell profile"; \
+		fi; \
 		if ! grep -q "listicles shell integration" "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; then \
 			echo "" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
 			echo "# listicles shell integration" >> "$(HOME)/.config/powershell/Microsoft.PowerShell_profile.ps1"; \
