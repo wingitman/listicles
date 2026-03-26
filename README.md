@@ -20,6 +20,29 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss
 
 ## Install
 
+### Windows
+
+No `make` or Unix tools required — only [Go](https://go.dev/dl/).
+
+```powershell
+git clone https://github.com/wingitman/listicles.git
+cd listicles
+.\install.ps1
+```
+
+This builds the binary, installs it to `%LOCALAPPDATA%\Programs\listicles\`, adds that directory to your user PATH (registry, no admin required), and patches your PowerShell `$PROFILE` with the `l` function.
+
+Open a new PowerShell terminal and type `l`.
+
+> **Execution policy:** if you get a script-blocked error, run this once:
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
+
+### macOS / Linux
+
+Requires `make` and Go.
+
 ```bash
 git clone https://github.com/wingitman/listicles.git
 cd listicles
@@ -32,6 +55,20 @@ Then reload your shell and type `l`.
 ---
 
 ## Uninstall
+
+### Windows
+
+```powershell
+.\uninstall.ps1
+```
+
+Removes the binary and install directory, and removes it from your user PATH. Then open your `$PROFILE` and delete the `# listicles shell integration` block if desired.
+
+```powershell
+notepad $PROFILE
+```
+
+### macOS / Linux
 
 ```bash
 make uninstall          # removes the binary
@@ -227,11 +264,22 @@ function l {
 
 ## Building from source
 
+**macOS / Linux**
+
 ```bash
 make build    # → bin/listicles
 make install  # build + install + patch shell rc
 make clean
 make uninstall
+```
+
+**Windows (PowerShell)**
+
+```powershell
+go build -ldflags='-s -w' -o bin\listicles.exe .   # build only
+.\install.ps1                                        # build + install + patch profile
+.\uninstall.ps1                                      # uninstall
+Remove-Item -Recurse bin\                            # clean
 ```
 
 Cross-compile:
