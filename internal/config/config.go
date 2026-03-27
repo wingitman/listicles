@@ -114,9 +114,9 @@ func ConfigDir() string {
 		if herr != nil {
 			return ""
 		}
-		return filepath.Join(home, ".config", "listicles")
+		return filepath.Join(home, ".config", "delbysoft")
 	}
-	return filepath.Join(base, "listicles")
+	return filepath.Join(base, "delbysoft")
 }
 
 // ConfigPath returns the full path to the config file.
@@ -126,7 +126,7 @@ func ConfigPath() string {
 
 // resolvePath returns the config file path to use. It checks the primary
 // (OS-native) path first, then falls back to the legacy Unix-style path
-// (~/.config/listicles/listicles.toml) for users who already have a config
+// (~/.config/delbysoft/listicles.toml) for users who already have a config
 // there from an earlier install. Returns the primary path when neither exists
 // so that WriteDefault writes to the correct location.
 func resolvePath() string {
@@ -135,7 +135,7 @@ func resolvePath() string {
 		return primary
 	}
 
-	// Legacy path: always ~/.config/listicles/listicles.toml
+	// Legacy path: always ~/.config/delbysoft/listicles.toml
 	if home, err := os.UserHomeDir(); err == nil {
 		legacy := filepath.Join(home, ".config", "listicles", "listicles.toml")
 		if legacy != primary {
