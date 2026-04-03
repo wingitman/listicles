@@ -72,27 +72,29 @@ func TestResultsToEntries_DeduplicatesSamePath(t *testing.T) {
 	}
 }
 
-func TestResultsToEntries_TextMatchLineNum(t *testing.T) {
+func TestResultsToEntries_TextMatchDeduplicatesByFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "source.go")
 	if err := os.WriteFile(path, []byte("package main\nfunc main() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
+	// Multiple line matches for the same file — ResultsToEntries deduplicates
+	// by file path now; use GroupTextResults to get per-line grouping.
 	results := []Result{
 		{Path: path, Line: "func main() {}", LineNum: 2},
+		{Path: path, Line: "package main", LineNum: 1},
 	}
 	entries := ResultsToEntries(results)
 	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
+		t.Fatalf("expected 1 deduplicated entry, got %d", len(entries))
 	}
-	// Name should contain the line number
-	if entries[0].Name != "source.go:2" {
-		t.Errorf("Name = %q, want source.go:2", entries[0].Name)
+	if entries[0].Name != "source.go" {
+		t.Errorf("Name = %q, want source.go", entries[0].Name)
 	}
 }
 
-func TestResultsToEntries_TextMatchMultipleLines_NoDedupAcrossLines(t *testing.T) {
+func TestGroupTextResults_GroupsByFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.go")
 	if err := os.WriteFile(path, []byte("a\nb\nc\n"), 0644); err != nil {
@@ -104,10 +106,46 @@ func TestResultsToEntries_TextMatchMultipleLines_NoDedupAcrossLines(t *testing.T
 		{Path: path, Line: "b", LineNum: 2},
 		{Path: path, Line: "c", LineNum: 3},
 	}
-	entries := ResultsToEntries(results)
-	// Different line numbers = different entries
-	if len(entries) != 3 {
-		t.Errorf("expected 3 entries for 3 line matches, got %d", len(entries))
+	groups := GroupTextResults(results)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(groups))
+	}
+	if groups[0].TotalMatches != 3 {
+		t.Errorf("TotalMatches = %d, want 3", groups[0].TotalMatches)
+	}
+	if groups[0].Entry.Name != "file.go" {
+		t.Errorf("Entry.Name = %q, want file.go", groups[0].Entry.Name)
+	}
+}
+
+func TestGroupTextResults_MultipleFiles(t *testing.T) {
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "a.go")
+	pathB := filepath.Join(dir, "b.go")
+	for _, p := range []string{pathA, pathB} {
+		if err := os.WriteFile(p, []byte("match\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results := []Result{
+		{Path: pathA, Line: "match", LineNum: 1},
+		{Path: pathB, Line: "match", LineNum: 1},
+		{Path: pathA, Line: "match2", LineNum: 2},
+	}
+	groups := GroupTextResults(results)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+	// Order should reflect first appearance: a.go then b.go
+	if groups[0].Entry.Name != "a.go" {
+		t.Errorf("groups[0].Name = %q, want a.go", groups[0].Entry.Name)
+	}
+	if groups[0].TotalMatches != 2 {
+		t.Errorf("groups[0].TotalMatches = %d, want 2", groups[0].TotalMatches)
+	}
+	if groups[1].Entry.Name != "b.go" {
+		t.Errorf("groups[1].Name = %q, want b.go", groups[1].Entry.Name)
 	}
 }
 

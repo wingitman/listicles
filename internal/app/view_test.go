@@ -305,7 +305,7 @@ func TestRenderStatusBar_ShowsStatusMsg(t *testing.T) {
 
 func TestRenderStatusBar_ShowsListMode(t *testing.T) {
 	m := newViewModel(nil)
-	m.width = 200
+	m.width = 400 // wide enough for all hints including new keybinds
 	m.listMode = ListDirsAndFiles
 	out := m.renderStatusBar()
 	if !strings.Contains(out, "files:all") {
@@ -419,9 +419,11 @@ func TestRenderParentCrumbs_Depth1_InsideTree(t *testing.T) {
 func TestRenderSearchBar_ShowsHints(t *testing.T) {
 	m := newViewModel(nil)
 	m.mode = ModeSearch
+	m.searchInputActive = true // typing state: shows search flags hint
 	out := m.renderSearchBar()
-	if !strings.Contains(out, "Enter for full search") {
-		t.Errorf("search bar should mention 'Enter for full search', got:\n%s", out)
+	// Typing state hint: "Enter search · -r recursive · -t content …"
+	if !strings.Contains(out, "Enter search") {
+		t.Errorf("search bar should mention 'Enter search', got:\n%s", out)
 	}
 	if !strings.Contains(out, "-r") {
 		t.Errorf("search bar should mention -r flag, got:\n%s", out)
@@ -475,7 +477,8 @@ func TestRenderSearchResultHeader_WithResults(t *testing.T) {
 	m := newViewModel(nil)
 	m.mode = ModeSearchResult
 	m.searchQuery = "main"
-	m.nodes = []TreeNode{
+	// renderSearchResultHeader now reads m.searchLiveNodes
+	m.searchLiveNodes = []TreeNode{
 		{Entry: makeEntry("main.go", false), Depth: 0},
 		{Entry: makeEntry("main_test.go", false), Depth: 0},
 	}
@@ -519,10 +522,12 @@ func TestView_SearchMode_ShowsSearchBar(t *testing.T) {
 	from.width = 80
 	from.height = 40
 	from.mode = ModeSearch
+	from.searchInputActive = true
 
 	out := from.View()
-	if !strings.Contains(out, "Enter for full search") {
-		t.Errorf("ModeSearch should show search bar, got:\n%s", out)
+	// In typing state the hint shows "Enter search"
+	if !strings.Contains(out, "Enter search") {
+		t.Errorf("ModeSearch should show search bar hint, got:\n%s", out)
 	}
 }
 
