@@ -252,44 +252,28 @@ func TestRenderStatusBar_ContainsConfiguredKeys(t *testing.T) {
 	m.nodes = []TreeNode{{Entry: makeEntry("dir", true), Depth: 0}}
 	out := m.renderStatusBar()
 
-	// All key hints should appear using the configured key values
+	// All key hints should appear in Nano-style [key]Action format
 	for _, hint := range []string{
-		"enter",  // confirm
-		"pgup",   // page_up
-		"pgdown", // page_down
-		"home",   // jump_top
-		"end",    // jump_bottom
-		"y",      // yank
-		"x",      // cut
-		"p",      // paste
-		"Y",      // copy_path
-		"f",      // toggle_list
-		"i",      // details
-		"a",      // add
-		"d",      // del
-		"r",      // rename
-		"e",      // edit
-		"o",      // opts
+		"[enter]", // confirm
+		"[pgup/",  // page_up
+		"pgdown]", // page_down
+		"[home/",  // jump_top
+		"end]",    // jump_bottom
+		"[y]",     // yank
+		"[x]",     // cut
+		"[p]",     // paste
+		"[Y]",     // copy_path
+		"[f]",     // toggle_list
+		"[i]",     // details
+		"[a]",     // add
+		"[d]",     // delete
+		"[r]",     // rename
+		"[e]",     // edit
+		"[o]",     // options
 	} {
 		if !strings.Contains(out, hint) {
 			t.Errorf("status bar missing key hint %q\nfull bar: %s", hint, out)
 		}
-	}
-}
-
-func TestRenderStatusBar_SearchResult_Simplified(t *testing.T) {
-	m := newViewModel(nil)
-	m.width = 200
-	m.mode = ModeSearchResult
-	out := m.renderStatusBar()
-
-	// Search result bar should be simpler — no add/del/rename
-	if strings.Contains(out, " add") {
-		t.Errorf("search result status bar should not show 'add', got:\n%s", out)
-	}
-	// But should show confirm and search
-	if !strings.Contains(out, "enter") {
-		t.Errorf("search result status bar should show 'enter', got:\n%s", out)
 	}
 }
 
@@ -308,14 +292,14 @@ func TestRenderStatusBar_ShowsListMode(t *testing.T) {
 	m.width = 400 // wide enough for all hints including new keybinds
 	m.listMode = ListDirsAndFiles
 	out := m.renderStatusBar()
-	if !strings.Contains(out, "files:all") {
-		t.Errorf("status bar should show 'files:all', got:\n%s", out)
+	if !strings.Contains(out, "Files:all") {
+		t.Errorf("status bar should show 'Files:all', got:\n%s", out)
 	}
 
 	m.listMode = ListDirsOnly
 	out = m.renderStatusBar()
-	if !strings.Contains(out, "files:dirs") {
-		t.Errorf("status bar should show 'files:dirs', got:\n%s", out)
+	if !strings.Contains(out, "Files:dirs") {
+		t.Errorf("status bar should show 'Files:dirs', got:\n%s", out)
 	}
 }
 
@@ -359,8 +343,8 @@ func TestRenderClipboardBar_ShowsPasteKey(t *testing.T) {
 	m.clipboardPath = "/tmp/x"
 	m.clipboardOp = ClipCopy
 	out := m.renderClipboardBar()
-	if !strings.Contains(out, "p") { // default paste key
-		t.Errorf("clipboard bar should show paste key, got:\n%s", out)
+	if !strings.Contains(out, "[p]Paste") { // default paste key in Nano-style format
+		t.Errorf("clipboard bar should show '[p]Paste', got:\n%s", out)
 	}
 }
 
@@ -421,9 +405,9 @@ func TestRenderSearchBar_ShowsHints(t *testing.T) {
 	m.mode = ModeSearch
 	m.searchInputActive = true // typing state: shows search flags hint
 	out := m.renderSearchBar()
-	// Typing state hint: "Enter search · -r recursive · -t content …"
-	if !strings.Contains(out, "Enter search") {
-		t.Errorf("search bar should mention 'Enter search', got:\n%s", out)
+	// Typing state hint: "[Enter]Search  [-r]Recursive  [-t]Content …"
+	if !strings.Contains(out, "[Enter]Search") {
+		t.Errorf("search bar should mention '[Enter]Search', got:\n%s", out)
 	}
 	if !strings.Contains(out, "-r") {
 		t.Errorf("search bar should mention -r flag, got:\n%s", out)
@@ -525,8 +509,8 @@ func TestView_SearchMode_ShowsSearchBar(t *testing.T) {
 	from.searchInputActive = true
 
 	out := from.View()
-	// In typing state the hint shows "Enter search"
-	if !strings.Contains(out, "Enter search") {
+	// In typing state the hint shows "[Enter]Search"
+	if !strings.Contains(out, "[Enter]Search") {
 		t.Errorf("ModeSearch should show search bar hint, got:\n%s", out)
 	}
 }

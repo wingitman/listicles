@@ -42,6 +42,7 @@ type Keybinds struct {
 	CDDir            string `toml:"cd_dir"`
 	OpenExplorer     string `toml:"open_explorer"`
 	Bookmark         string `toml:"bookmark"`
+	ShowHints        string `toml:"show_hints"`
 }
 
 // Display holds display preferences.
@@ -98,8 +99,9 @@ func Default() *Config {
 			Ignore:           "I",
 			FullSearch:       "ctrl+f",
 			CDDir:            "c",
-			OpenExplorer:     "O",
+			OpenExplorer:     "E",
 			Bookmark:         "b",
+			ShowHints:        "?",
 		},
 		Display: Display{
 			ShowHidden:       false,
@@ -226,8 +228,9 @@ switch_tabs_global = "g"
 ignore             = "I"
 full_search        = "ctrl+f"
 cd_dir             = "c"
-open_explorer      = "O"
+open_explorer      = "E"
 bookmark           = "b"
+show_hints         = "?"
 
 [display]
 show_hidden        = false

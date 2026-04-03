@@ -251,17 +251,17 @@ func (m Model) renderSearchBar() string {
 	var hint string
 	if m.searchInputActive {
 		// Typing state: show how to run search.
-		hint = ui.StyleMuted.Render("  Enter search  ·  -r recursive  ·  -t content  ·  -rt both  ·  Esc cancel")
+		hint = ui.StyleMuted.Render("  [Enter]Search  [-r]Recursive  [-t]Content  [-rt]Both  [Esc]Cancel")
 	} else if len(m.searchLiveNodes) > 0 {
 		// Navigation state: show how to navigate and confirm.
 		hint = ui.StyleMuted.Render(fmt.Sprintf(
-			"  Enter open  ·  %s/%s navigate  ·  Esc edit query  ·  %s exit",
+			"  [Enter]Open  [%s/%s]Navigate  [Esc]Edit Query  [%s]Exit",
 			m.keys.up, m.keys.down, m.keys.quit,
 		))
 	} else {
 		// Navigation state but no results: prompt to edit query.
 		hint = ui.StyleMuted.Render(fmt.Sprintf(
-			"  Esc edit query  ·  %s exit",
+			"  [Esc]Edit Query  [%s]Exit",
 			m.keys.quit,
 		))
 	}
@@ -320,7 +320,7 @@ func (m Model) renderRecentsHeader() string {
 		title = ui.StyleMuted.Render(fmt.Sprintf("  Recents — %s  (none)", scopeLabel))
 	}
 	hint := ui.StyleMuted.Render(fmt.Sprintf(
-		"  %s global  ·  %s bookmarks  ·  %s remove  ·  Esc back",
+		"  [%s]Global  [%s]Bookmarks  [%s]Remove  [Esc]Back",
 		m.keys.switchTabsGlobal, m.keys.switchTabs, m.keys.delete,
 	))
 	return title + "\n" + hint
@@ -344,7 +344,7 @@ func (m Model) renderBookmarksHeader() string {
 		title = ui.StyleMuted.Render(fmt.Sprintf("  Bookmarks — %s  (none)", scopeLabel))
 	}
 	hint := ui.StyleMuted.Render(fmt.Sprintf(
-		"  %s global  ·  %s close  ·  %s add  ·  %s remove  ·  %s rename  ·  Esc back",
+		"  [%s]Global  [%s]Close  [%s]Add  [%s]Remove  [%s]Rename  [Esc]Back",
 		m.keys.switchTabsGlobal, m.keys.switchTabs, m.keys.bookmark, m.keys.delete, m.keys.rename,
 	))
 	return title + "\n" + hint
@@ -659,7 +659,7 @@ func (m Model) renderClipboardBar() string {
 		op = "cut"
 	}
 	return ui.StyleClipboard.Render(fmt.Sprintf(
-		"  [%s] %s  ·  %s paste  ·  press %s/%s again to clear",
+		"  [%s] %s  [%s]Paste  [%s/%s]Clear",
 		op,
 		filepath.Base(m.clipboardPath),
 		m.keys.paste,
@@ -677,48 +677,47 @@ func (m Model) renderStatusBar() string {
 	}
 
 	k := m.keys
+	hintsKey := "[" + k.showHints + "]Hints"
+
+	truncate := func(s string) string {
+		if len(s) > m.width {
+			return s[:m.width-1]
+		}
+		return s
+	}
+	render := func(parts []string, suffix string) string {
+		row := strings.Join(parts, "  ")
+		if suffix != "" {
+			row += "  " + suffix
+		}
+		return ui.StyleStatusBar.Render(truncate(row))
+	}
 
 	if m.mode == ModeRecents {
-		bar := strings.Join([]string{
-			k.up + "/" + k.down + " navigate",
-			k.confirm + " open",
-			k.delete + " remove",
-			k.switchTabsGlobal + " global",
-			k.switchTabs + " bookmarks",
-			"esc back",
-		}, "  ·  ")
-		if len(bar) > m.width {
-			bar = bar[:m.width-1]
-		}
-		return ui.StyleStatusBar.Render(bar)
+		return render([]string{
+			"[" + k.up + "/" + k.down + "]Nav",
+			"[" + k.confirm + "]Open",
+			"[" + k.delete + "]Remove",
+			"[" + k.switchTabsGlobal + "]Global",
+			"[" + k.switchTabs + "]Bookmarks",
+			"[Esc]Back",
+		}, hintsKey)
 	}
 
 	if m.mode == ModeBookmarks {
-		bar := strings.Join([]string{
-			k.up + "/" + k.down + " navigate",
-			k.confirm + " open",
-			k.bookmark + " add",
-			k.delete + " remove",
-			k.rename + " rename",
-			k.switchTabsGlobal + " global",
-			k.switchTabs + " close",
-			"esc back",
-		}, "  ·  ")
-		if len(bar) > m.width {
-			bar = bar[:m.width-1]
-		}
-		return ui.StyleStatusBar.Render(bar)
+		return render([]string{
+			"[" + k.up + "/" + k.down + "]Nav",
+			"[" + k.confirm + "]Open",
+			"[" + k.bookmark + "]Add",
+			"[" + k.delete + "]Remove",
+			"[" + k.rename + "]Rename",
+			"[" + k.switchTabsGlobal + "]Global",
+			"[" + k.switchTabs + "]Close",
+			"[Esc]Back",
+		}, hintsKey)
 	}
 
-	entry := m.selectedEntry()
-	entryDesc := ""
-	if entry != nil {
-		if entry.IsDir() {
-			entryDesc = "dir"
-		} else {
-			entryDesc = "file"
-		}
-	}
+	// ── Normal mode ───────────────────────────────────────────────────────────
 
 	detailLabel := []string{"none", "count", "size", "path"}[m.detailLevel]
 	listLabel := "dirs"
@@ -726,44 +725,56 @@ func (m Model) renderStatusBar() string {
 		listLabel = "all"
 	}
 
-	navKeys := k.up + "/" + k.down + "/" + k.left + "/" + k.right
+	// Row 1 — Navigation: movement, tree interaction, discovery
+	navRow := []string{
+		"[" + k.up + "/" + k.down + "/" + k.left + "/" + k.right + "]Nav",
+		"[" + k.pageUp + "/" + k.pageDown + "]Page",
+		"[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot",
+		"[" + k.confirm + "]Expand",
+		"[" + k.cdDir + "]Cd",
+		"[" + k.searchKey + "]Search",
+		"[" + k.fullSearch + "]Full Search",
+		"[" + k.toggleHidden + "]Hidden",
+	}
 
-	parts := []string{
-		navKeys + " nav",
-		"1-N jump",
-		k.pageUp + "/" + k.pageDown + " page",
-		k.jumpTop + "/" + k.jumpBottom + " top/bot",
-		k.confirm + " expand",
-		k.cdDir + " cd",
-		k.openExplorer + " explorer",
-		k.searchKey + " search",
-		k.switchTabs + " recents",
-		k.bookmark + " bookmark",
-		k.quit + " quit",
-		k.details + " detail:" + detailLabel,
-		k.toggleList + " files:" + listLabel,
-		k.add + " add",
-		k.delete + " del",
-		k.rename + " rename",
-		k.edit + " edit",
-		k.yank + " yank",
-		k.cut + " cut",
-		k.paste + " paste",
-		k.copyPath + " copy path",
-		k.options + " opts",
+	// Row 2 — File operations: CRUD + clipboard + explorer
+	fileRow := []string{
+		"[" + k.add + "]Add",
+		"[" + k.delete + "]Delete",
+		"[" + k.rename + "]Rename",
+		"[" + k.edit + "]Edit",
+		"[" + k.openExplorer + "]Explorer",
+		"[" + k.yank + "]Yank",
+		"[" + k.cut + "]Cut",
+		"[" + k.paste + "]Paste",
+		"[" + k.copyPath + "]Copy Path",
+	}
+
+	// Row 3 — View & app: display toggles + navigation tabs + app controls
+	viewRow := []string{
+		"[" + k.details + "]Details:" + detailLabel,
+		"[" + k.toggleList + "]Files:" + listLabel,
 	}
 	if m.gitRoot != "" {
-		parts = append(parts, k.ignore+" ignore")
+		viewRow = append(viewRow, "["+k.ignore+"]Ignore")
 	}
-	if entryDesc != "" {
-		parts = append([]string{entryDesc}, parts...)
-	}
+	viewRow = append(viewRow,
+		"["+k.switchTabs+"]Recents",
+		"["+k.bookmark+"]Bookmark",
+		"["+k.options+"]Options",
+		"["+k.quit+"]Quit",
+	)
 
-	bar := strings.Join(parts, "  ·  ")
-	if len(bar) > m.width {
-		bar = bar[:m.width-1]
+	switch m.hintsMode {
+	case HintsNavigation:
+		return render(navRow, hintsKey+":nav")
+	case HintsActions:
+		return render(fileRow, "") + "\n" + render(viewRow, hintsKey+":actions")
+	default: // HintsFull
+		return render(navRow, "") + "\n" +
+			render(fileRow, "") + "\n" +
+			render(viewRow, hintsKey+":full")
 	}
-	return ui.StyleStatusBar.Render(bar)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

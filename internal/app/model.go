@@ -67,6 +67,15 @@ const (
 	ConfirmPasteMove ConfirmAction = iota
 )
 
+// HintsMode controls which subset of keybind hints are shown in the status bar.
+type HintsMode int
+
+const (
+	HintsFull       HintsMode = iota // all hints (navigation + actions + view/app)
+	HintsNavigation                  // navigation hints only
+	HintsActions                     // file/clipboard/view/app hints only
+)
+
 // ClipOp is the type of pending clipboard operation.
 type ClipOp int
 
@@ -120,6 +129,7 @@ type Model struct {
 	listMode      ListMode
 	detailLevel   DetailLevel
 	showHidden    bool
+	hintsMode     HintsMode
 
 	// Text input (add / rename)
 	textInput      textinput.Model
@@ -198,6 +208,7 @@ type resolvedKeys struct {
 	cdDir            string
 	openExplorer     string
 	bookmark         string
+	showHints        string
 }
 
 func resolveKeys(k config.Keybinds) resolvedKeys {
@@ -233,6 +244,7 @@ func resolveKeys(k config.Keybinds) resolvedKeys {
 		cdDir:            k.CDDir,
 		openExplorer:     k.OpenExplorer,
 		bookmark:         k.Bookmark,
+		showHints:        k.ShowHints,
 	}
 }
 
@@ -668,6 +680,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInput, cmd = m.textInput.Update(msg)
 				return m, cmd
 			}
+		}
+
+		// ── Cycle hints mode (universal) ─────────────────────────────────
+		if matchKey(key, m.keys.showHints) {
+			switch m.hintsMode {
+			case HintsFull:
+				m.hintsMode = HintsNavigation
+			case HintsNavigation:
+				m.hintsMode = HintsActions
+			default:
+				m.hintsMode = HintsFull
+			}
+			return m, nil
 		}
 
 		// ── Search mode ───────────────────────────────────────────────────
@@ -1470,20 +1495,45 @@ func (m Model) openEditor(path string) tea.Cmd {
 	})
 }
 
-// openDefaultCmd opens path in the default application using tea.ExecProcess,
-// which suspends the TUI for the duration of the subprocess. This handles both
-// GUI apps (imperceptible pause) and terminal apps (e.g. less, man) correctly,
-// since the alt-screen is released while the subprocess runs and restored after.
+// openDefaultCmd opens path in the system file explorer using tea.ExecProcess.
+// For files, it reveals the file in its containing folder. For directories, it
+// opens the directory directly. The behaviour is OS-specific:
+//   - macOS:   open -R <file>  /  open <dir>
+//   - Windows: explorer /select,<file>  /  explorer <dir>
+//   - Linux:   xdg-open <parent-dir>  /  xdg-open <dir>
+//
+// If a custom opener is set in config it is used as-is with the path as the
+// sole argument (no reveal-in-folder logic is applied).
 func openDefaultCmd(path string, opener string) tea.Cmd {
-	if opener == "" {
+	var c *exec.Cmd
+	if opener != "" {
+		c = exec.Command(opener, path)
+	} else {
+		info, err := os.Stat(path)
+		isDir := err == nil && info.IsDir()
+
 		switch runtime.GOOS {
 		case "darwin":
-			opener = "open"
-		default:
-			opener = "xdg-open"
+			if isDir {
+				c = exec.Command("open", path)
+			} else {
+				c = exec.Command("open", "-R", path)
+			}
+		case "windows":
+			if isDir {
+				c = exec.Command("explorer", path)
+			} else {
+				// /select highlights the file in Explorer
+				c = exec.Command("explorer", "/select,"+path)
+			}
+		default: // Linux and other Unix-like systems
+			if isDir {
+				c = exec.Command("xdg-open", path)
+			} else {
+				c = exec.Command("xdg-open", filepath.Dir(path))
+			}
 		}
 	}
-	c := exec.Command(opener, path)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
 			return errorMsg(fmt.Sprintf("Could not open %q: %v", path, err))
