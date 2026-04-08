@@ -3,11 +3,12 @@ package app
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/wingitman/listicles/internal/fs"
+	"github.com/wingitman/listicles/internal/state"
 	"github.com/wingitman/listicles/internal/ui"
 )
 
@@ -23,21 +24,27 @@ func (m Model) View() string {
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n")
 
-	if m.mode != ModeSearchResult {
+	switch m.mode {
+	case ModeRecents:
+		b.WriteString(m.renderRecentsHeader())
+		b.WriteString("\n")
+	case ModeBookmarks:
+		b.WriteString(m.renderBookmarksHeader())
+		b.WriteString("\n")
+	case ModeSearch:
+		if m.cfg.Display.ParentDepth > 0 {
+			crumbs := m.renderParentCrumbs()
+			if crumbs != "" {
+				b.WriteString(crumbs)
+			}
+		}
+		b.WriteString(m.renderSearchBar())
+		b.WriteString("\n")
+	default:
 		crumbs := m.renderParentCrumbs()
 		if crumbs != "" {
 			b.WriteString(crumbs)
 		}
-	}
-
-	if m.mode == ModeSearch {
-		b.WriteString(m.renderSearchBar())
-		b.WriteString("\n")
-	}
-
-	if m.mode == ModeSearchResult {
-		b.WriteString(m.renderSearchResultHeader())
-		b.WriteString("\n")
 	}
 
 	b.WriteString(m.renderNodes())
@@ -74,8 +81,17 @@ func (m Model) renderHeader() string {
 	if m.showHidden {
 		badges = append(badges, ui.StyleMuted.Render("[hidden]"))
 	}
-	if m.mode == ModeSearchResult {
+	if m.mode == ModeSearch {
 		badges = append(badges, ui.StyleInputPrompt.Render("[search]"))
+		if m.searchRunning {
+			badges = append(badges, ui.StyleMuted.Render("[…]"))
+		}
+	}
+	if m.mode == ModeRecents {
+		badges = append(badges, ui.StyleInputPrompt.Render("[recents]"))
+	}
+	if m.mode == ModeBookmarks {
+		badges = append(badges, ui.StyleInputPrompt.Render("[bookmarks]"))
 	}
 	if m.digitBuffer != "" {
 		badges = append(badges, ui.StyleNumber.Render("→ "+m.digitBuffer))
@@ -206,35 +222,60 @@ func (m Model) renderSearchBar() string {
 		toolBadge = ui.StyleMuted.Render(" [fd]")
 	}
 
+	// Count only top-level result nodes (not expanded snippet children).
+	topLevelCount := 0
+	for _, n := range m.searchLiveNodes {
+		if n.Depth == 0 {
+			topLevelCount++
+		}
+	}
+
 	countStr := ""
-	if len(m.searchLiveNodes) > 0 {
+	if m.searchRunning {
+		countStr = ui.StyleMuted.Render("  searching…")
+	} else if topLevelCount > 0 {
 		max := m.cfg.Display.SearchMaxResults
-		if len(m.searchLiveNodes) >= max {
+		if topLevelCount >= max {
 			countStr = ui.StyleMuted.Render(fmt.Sprintf("  %d+ matches", max))
 		} else {
-			countStr = ui.StyleMuted.Render(fmt.Sprintf("  %d match(es)", len(m.searchLiveNodes)))
+			countStr = ui.StyleMuted.Render(fmt.Sprintf("  %d match(es)", topLevelCount))
 		}
-	} else if strings.TrimSpace(raw) != "" {
-		bareQuery := strings.TrimSpace(raw)
-		for _, f := range []string{"-rt", "-tr", "-r", "-t"} {
-			bareQuery = strings.ReplaceAll(bareQuery, f, "")
-		}
-		if strings.TrimSpace(bareQuery) != "" {
-			countStr = ui.StyleMuted.Render("  no matches")
-		}
+	} else if !m.searchRunning && strings.TrimSpace(raw) != "" && m.searchQuery != "" {
+		// Only show "no matches" after a full search has run, not while typing.
+		countStr = ui.StyleMuted.Render("  no matches")
 	}
 
 	label := ui.StyleInputPrompt.Render("/") + flags + toolBadge + "  "
 	bar := label + m.textInput.View() + countStr
-	hint := ui.StyleMuted.Render("  Enter for full search  ·  -r recursive  ·  -t content  ·  -rt both  ·  Esc cancel")
+
+	var hint string
+	if m.searchInputActive {
+		// Typing state: show how to run search.
+		hint = ui.StyleMuted.Render("  [Enter]Search  [-r]Recursive  [-t]Content  [-rt]Both  [Esc]Cancel")
+	} else if len(m.searchLiveNodes) > 0 {
+		// Navigation state: show how to navigate and confirm.
+		hint = ui.StyleMuted.Render(fmt.Sprintf(
+			"  [Enter]Open  [%s/%s]Navigate  [Esc]Edit Query  [%s]Exit",
+			m.keys.up, m.keys.down, m.keys.quit,
+		))
+	} else {
+		// Navigation state but no results: prompt to edit query.
+		hint = ui.StyleMuted.Render(fmt.Sprintf(
+			"  [Esc]Edit Query  [%s]Exit",
+			m.keys.quit,
+		))
+	}
 	return bar + "\n" + hint
 }
 
+// renderSearchResultHeader is kept for backward compatibility with tests.
+// In normal usage the search result info is shown inline in the search bar.
 func (m Model) renderSearchResultHeader() string {
 	if m.searchRunning {
 		return ui.StyleMuted.Render("  Searching…")
 	}
-	count := len(m.nodes)
+	nodes := m.searchLiveNodes
+	count := len(nodes)
 	if count == 0 {
 		return ui.StyleError.Render("  No results for ") +
 			ui.StyleInputPrompt.Render(fmt.Sprintf("%q", m.searchQuery))
@@ -259,6 +300,56 @@ func (m Model) renderSearchResultHeader() string {
 		ui.StyleMuted.Render("  ·  Esc to clear")
 }
 
+// ─── Recents / Bookmarks headers ─────────────────────────────────────────────
+
+func (m Model) renderRecentsHeader() string {
+	scopeLabel := filepath.Base(m.gitRootOrCwd())
+	if m.stateScope {
+		scopeLabel = "all projects"
+	}
+
+	count := 0
+	for _, n := range m.nodes {
+		if !n.IsGroupHeader {
+			count++
+		}
+	}
+
+	title := ui.StyleSuccess.Render(fmt.Sprintf("  Recents — %s", scopeLabel))
+	if count == 0 {
+		title = ui.StyleMuted.Render(fmt.Sprintf("  Recents — %s  (none)", scopeLabel))
+	}
+	hint := ui.StyleMuted.Render(fmt.Sprintf(
+		"  [%s]Global  [%s]Bookmarks  [%s]Remove  [Esc]Back",
+		m.keys.switchTabsGlobal, m.keys.switchTabs, m.keys.delete,
+	))
+	return title + "\n" + hint
+}
+
+func (m Model) renderBookmarksHeader() string {
+	scopeLabel := filepath.Base(m.gitRootOrCwd())
+	if m.stateScope {
+		scopeLabel = "all projects"
+	}
+
+	count := 0
+	for _, n := range m.nodes {
+		if !n.IsGroupHeader {
+			count++
+		}
+	}
+
+	title := ui.StyleSuccess.Render(fmt.Sprintf("  Bookmarks — %s", scopeLabel))
+	if count == 0 {
+		title = ui.StyleMuted.Render(fmt.Sprintf("  Bookmarks — %s  (none)", scopeLabel))
+	}
+	hint := ui.StyleMuted.Render(fmt.Sprintf(
+		"  [%s]Global  [%s]Close  [%s]Add  [%s]Remove  [%s]Rename  [Esc]Back",
+		m.keys.switchTabsGlobal, m.keys.switchTabs, m.keys.bookmark, m.keys.delete, m.keys.rename,
+	))
+	return title + "\n" + hint
+}
+
 // ─── Node list ────────────────────────────────────────────────────────────────
 
 func (m Model) renderNodes() string {
@@ -268,7 +359,7 @@ func (m Model) renderNodes() string {
 	}
 
 	if len(nodes) == 0 {
-		if m.mode == ModeSearch {
+		if m.mode == ModeSearch || m.mode == ModeRecents || m.mode == ModeBookmarks {
 			return ""
 		}
 		return ui.StyleMuted.Render("  (empty directory)") + "\n"
@@ -290,7 +381,7 @@ func (m Model) renderNodes() string {
 	for i := m.offset; i < end; i++ {
 		b.WriteString(m.renderNode(i, nodes[i], focusedDepth, siblingCount))
 		b.WriteString("\n")
-		if nodes[i].Depth == focusedDepth {
+		if nodes[i].Depth == focusedDepth && !nodes[i].IsGroupHeader {
 			siblingCount++
 		}
 	}
@@ -309,6 +400,41 @@ func (m Model) renderNodes() string {
 func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx int) string {
 	e := node.Entry
 
+	// ── Group headers (non-selectable separators in global bookmark/recents view)
+	if node.IsGroupHeader {
+		name := e.Name
+		if len(name) > m.width-4 {
+			name = "…" + name[len(name)-(m.width-5):]
+		}
+		line := ui.StyleParentCrumb.Render("  " + name)
+		if m.width > lipgloss.Width(line)+2 {
+			line += ui.StyleMuted.Render(strings.Repeat("─", m.width-lipgloss.Width(line)-2))
+		}
+		return line
+	}
+
+	// ── Text-search match child (line snippet)
+	if node.IsTextMatch {
+		lineNum := ui.StyleNumber.Render(fmt.Sprintf(" :%d  ", node.MatchLineNum))
+		snippet := ui.StyleMuted.Render(node.MatchSnippet)
+		line := lineNum + snippet
+		if idx == m.cursor {
+			lineWidth := lipgloss.Width(line)
+			if lineWidth < m.width {
+				line = line + strings.Repeat(" ", m.width-lineWidth)
+			}
+			return ui.StyleSelected.Render(line)
+		}
+		return line
+	}
+
+	// ── Recents / Bookmarks mode: show path + time-ago suffix
+	if m.mode == ModeRecents || m.mode == ModeBookmarks {
+		return m.renderTabNode(idx, node)
+	}
+
+	// ── Standard tree node ──────────────────────────────────────────────────
+
 	// Number label: only for nodes at the focused depth
 	numLabel := " · "
 	digits := len(strconv.Itoa(siblingIdx + 1))
@@ -319,7 +445,7 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 
 	// Indent
 	crumbDepth := 0
-	if m.cfg.Display.ParentDepth > 0 && m.mode != ModeSearchResult {
+	if m.cfg.Display.ParentDepth > 0 && m.mode != ModeSearch {
 		crumbDepth = m.cfg.Display.ParentDepth + 1
 	}
 	totalIndent := crumbDepth + node.Depth
@@ -327,7 +453,7 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 
 	// Icon
 	icon := "  "
-	if e.IsDir() {
+	if e.IsDir() || len(node.PendingChildren) > 0 {
 		if node.Expanded {
 			icon = " ▼ "
 		} else {
@@ -337,12 +463,18 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 
 	// Display name
 	displayName := e.Name
-	if m.mode == ModeSearchResult {
+	if m.mode == ModeSearch && !node.IsTextMatch {
 		if rel, err := filepath.Rel(m.prevRootDir, e.Path); err == nil {
-			displayName = rel
-			if e.Name != filepath.Base(e.Path) {
-				displayName = rel + strings.TrimPrefix(e.Name, filepath.Base(e.Path))
+			base := filepath.Base(e.Path)
+			if e.Name == base {
+				// Plain name match: show relative path.
+				displayName = rel
+			} else if strings.HasPrefix(e.Name, base) {
+				// Text-search parent: "basename (N matches)" — preserve the suffix.
+				suffix := strings.TrimPrefix(e.Name, base)
+				displayName = rel + suffix
 			}
+			// else: leave displayName = e.Name as-is.
 		}
 	}
 
@@ -357,9 +489,15 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 		}
 	}
 
-	// Style name
+	// Style name — gitignored entries use muted style (same as hidden files).
 	var nameStr string
-	if e.IsDir() {
+	if e.Ignored {
+		if e.IsDir() {
+			nameStr = ui.StyleMuted.Render(displayName+"/") + clipSuffix
+		} else {
+			nameStr = ui.StyleMuted.Render(displayName) + clipSuffix
+		}
+	} else if e.IsDir() {
 		nameStr = ui.StyleDirName.Render(displayName+"/") + clipSuffix
 	} else {
 		nameStr = ui.StyleFileName.Render(displayName) + clipSuffix
@@ -402,6 +540,52 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 		return ui.StyleSelected.Render(line)
 	}
 
+	return line
+}
+
+// renderTabNode renders a single row in Recents or Bookmarks mode.
+// Format: icon  name  ·  rel/path/  ·  time-ago
+func (m Model) renderTabNode(idx int, node TreeNode) string {
+	e := node.Entry
+
+	icon := "  "
+	if e.IsDir() {
+		icon = " ▶ "
+	}
+
+	name := e.Name
+	nameStr := ui.StyleFileName.Render(name)
+	if e.IsDir() {
+		nameStr = ui.StyleDirName.Render(name + "/")
+	}
+
+	// Relative path from project root.
+	root := m.gitRootOrCwd()
+	rel := ""
+	if r, err := filepath.Rel(root, filepath.Dir(e.Path)); err == nil && r != "." {
+		rel = ui.StyleMuted.Render("  " + r + "/")
+	}
+
+	// Time-ago from recents (only in ModeRecents).
+	timeStr := ""
+	if m.mode == ModeRecents && m.appState != nil {
+		for _, r := range m.appState.Recents {
+			if r.Path == e.Path {
+				timeStr = ui.StyleMuted.Render("  " + state.FormatTimeAgo(r.AccessedAt))
+				break
+			}
+		}
+	}
+
+	line := icon + nameStr + rel + timeStr
+
+	if idx == m.cursor {
+		lineWidth := lipgloss.Width(line)
+		if lineWidth < m.width {
+			line = line + strings.Repeat(" ", m.width-lineWidth)
+		}
+		return ui.StyleSelected.Render(line)
+	}
 	return line
 }
 
@@ -475,7 +659,7 @@ func (m Model) renderClipboardBar() string {
 		op = "cut"
 	}
 	return ui.StyleClipboard.Render(fmt.Sprintf(
-		"  [%s] %s  ·  %s paste  ·  press %s/%s again to clear",
+		"  [%s] %s  [%s]Paste  [%s/%s]Clear",
 		op,
 		filepath.Base(m.clipboardPath),
 		m.keys.paste,
@@ -493,29 +677,47 @@ func (m Model) renderStatusBar() string {
 	}
 
 	k := m.keys
+	hintsKey := "[" + k.showHints + "]Hints"
 
-	if m.mode == ModeSearchResult {
-		bar := strings.Join([]string{
-			k.up + "/" + k.down + " navigate",
-			k.confirm + " cd/open",
-			k.searchKey + " new search",
-			"esc clear",
-		}, "  ·  ")
-		if len(bar) > m.width {
-			bar = bar[:m.width-1]
+	truncate := func(s string) string {
+		if len(s) > m.width {
+			return s[:m.width-1]
 		}
-		return ui.StyleStatusBar.Render(bar)
+		return s
+	}
+	render := func(parts []string, suffix string) string {
+		row := strings.Join(parts, "  ")
+		if suffix != "" {
+			row += "  " + suffix
+		}
+		return ui.StyleStatusBar.Render(truncate(row))
 	}
 
-	entry := m.selectedEntry()
-	entryDesc := ""
-	if entry != nil {
-		if entry.IsDir() {
-			entryDesc = "dir"
-		} else {
-			entryDesc = "file"
-		}
+	if m.mode == ModeRecents {
+		return render([]string{
+			"[" + k.up + "/" + k.down + "]Nav",
+			"[" + k.confirm + "]Open",
+			"[" + k.delete + "]Remove",
+			"[" + k.switchTabsGlobal + "]Global",
+			"[" + k.switchTabs + "]Bookmarks",
+			"[Esc]Back",
+		}, hintsKey)
 	}
+
+	if m.mode == ModeBookmarks {
+		return render([]string{
+			"[" + k.up + "/" + k.down + "]Nav",
+			"[" + k.confirm + "]Open",
+			"[" + k.bookmark + "]Add",
+			"[" + k.delete + "]Remove",
+			"[" + k.rename + "]Rename",
+			"[" + k.switchTabsGlobal + "]Global",
+			"[" + k.switchTabs + "]Close",
+			"[Esc]Back",
+		}, hintsKey)
+	}
+
+	// ── Normal mode ───────────────────────────────────────────────────────────
 
 	detailLabel := []string{"none", "count", "size", "path"}[m.detailLevel]
 	listLabel := "dirs"
@@ -523,37 +725,56 @@ func (m Model) renderStatusBar() string {
 		listLabel = "all"
 	}
 
-	navKeys := k.up + "/" + k.down + "/" + k.left + "/" + k.right
-
-	parts := []string{
-		navKeys + " nav",
-		"1-N jump",
-		k.pageUp + "/" + k.pageDown + " page",
-		k.jumpTop + "/" + k.jumpBottom + " top/bot",
-		k.confirm + " cd/open",
-		k.searchKey + " search",
-		k.quit + " quit",
-		k.details + " detail:" + detailLabel,
-		k.toggleList + " files:" + listLabel,
-		k.add + " add",
-		k.delete + " del",
-		k.rename + " rename",
-		k.edit + " edit",
-		k.yank + " yank",
-		k.cut + " cut",
-		k.paste + " paste",
-		k.copyPath + " copy path",
-		k.options + " opts",
-	}
-	if entryDesc != "" {
-		parts = append([]string{entryDesc}, parts...)
+	// Row 1 — Navigation: movement, tree interaction, discovery
+	navRow := []string{
+		"[" + k.up + "/" + k.down + "/" + k.left + "/" + k.right + "]Nav",
+		"[" + k.pageUp + "/" + k.pageDown + "]Page",
+		"[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot",
+		"[" + k.confirm + "]Expand",
+		"[" + k.cdDir + "]Cd",
+		"[" + k.searchKey + "]Search",
+		"[" + k.fullSearch + "]Full Search",
+		"[" + k.toggleHidden + "]Hidden",
 	}
 
-	bar := strings.Join(parts, "  ·  ")
-	if len(bar) > m.width {
-		bar = bar[:m.width-1]
+	// Row 2 — File operations: CRUD + clipboard + explorer
+	fileRow := []string{
+		"[" + k.add + "]Add",
+		"[" + k.delete + "]Delete",
+		"[" + k.rename + "]Rename",
+		"[" + k.edit + "]Edit",
+		"[" + k.openExplorer + "]Explorer",
+		"[" + k.yank + "]Yank",
+		"[" + k.cut + "]Cut",
+		"[" + k.paste + "]Paste",
+		"[" + k.copyPath + "]Copy Path",
 	}
-	return ui.StyleStatusBar.Render(bar)
+
+	// Row 3 — View & app: display toggles + navigation tabs + app controls
+	viewRow := []string{
+		"[" + k.details + "]Details:" + detailLabel,
+		"[" + k.toggleList + "]Files:" + listLabel,
+	}
+	if m.gitRoot != "" {
+		viewRow = append(viewRow, "["+k.ignore+"]Ignore")
+	}
+	viewRow = append(viewRow,
+		"["+k.switchTabs+"]Recents",
+		"["+k.bookmark+"]Bookmark",
+		"["+k.options+"]Options",
+		"["+k.quit+"]Quit",
+	)
+
+	switch m.hintsMode {
+	case HintsNavigation:
+		return render(navRow, hintsKey+":nav")
+	case HintsActions:
+		return render(fileRow, "") + "\n" + render(viewRow, hintsKey+":actions")
+	default: // HintsFull
+		return render(navRow, "") + "\n" +
+			render(fileRow, "") + "\n" +
+			render(viewRow, hintsKey+":full")
+	}
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

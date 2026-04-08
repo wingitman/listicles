@@ -38,7 +38,7 @@ func TestScanDir_DirsOnly(t *testing.T) {
 	mustMkdir(t, dir, "gamma")
 	mustFile(t, dir, "file.txt")
 
-	entries, err := ScanDir(dir, false, false)
+	entries, err := ScanDir(dir, false, false, nil)
 	if err != nil {
 		t.Fatalf("ScanDir: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestScanDir_DirsAndFiles(t *testing.T) {
 	mustFile(t, dir, "z_file.txt")
 	mustFile(t, dir, "a_file.txt")
 
-	entries, err := ScanDir(dir, false, true)
+	entries, err := ScanDir(dir, false, true, nil)
 	if err != nil {
 		t.Fatalf("ScanDir: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestScanDir_HiddenFiles(t *testing.T) {
 	mustMkdir(t, dir, "visible")
 
 	// showHidden=false should exclude .hidden
-	entries, err := ScanDir(dir, false, false)
+	entries, err := ScanDir(dir, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestScanDir_HiddenFiles(t *testing.T) {
 	}
 
 	// showHidden=true should include .hidden
-	entries, err = ScanDir(dir, true, false)
+	entries, err = ScanDir(dir, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestScanDir_HiddenFiles(t *testing.T) {
 
 func TestScanDir_Empty(t *testing.T) {
 	dir := t.TempDir()
-	entries, err := ScanDir(dir, false, false)
+	entries, err := ScanDir(dir, false, false, nil)
 	if err != nil {
 		t.Fatalf("ScanDir on empty dir: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestScanDir_SortOrder(t *testing.T) {
 	mustMkdir(t, dir, "A") // uppercase should sort case-insensitively
 	mustMkdir(t, dir, "b")
 
-	entries, err := ScanDir(dir, false, false)
+	entries, err := ScanDir(dir, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestScanDir_FileSize(t *testing.T) {
 	dir := t.TempDir()
 	mustFileContent(t, dir, "data.txt", "hello world")
 
-	entries, err := ScanDir(dir, false, true)
+	entries, err := ScanDir(dir, false, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

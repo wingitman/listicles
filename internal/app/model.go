@@ -17,6 +17,7 @@ import (
 	"github.com/wingitman/listicles/internal/config"
 	"github.com/wingitman/listicles/internal/fs"
 	"github.com/wingitman/listicles/internal/search"
+	"github.com/wingitman/listicles/internal/state"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -28,8 +29,10 @@ const (
 	ModeConfirm           // waiting for y/n
 	ModeInput             // text input (add/rename)
 	ModeError             // showing an error
-	ModeSearch            // live filter bar
-	ModeSearchResult      // committed search results
+	ModeSearch            // live filter bar (also used for full search results)
+	ModeSearchResult      // kept for backward compat; no longer entered
+	ModeRecents           // recents list
+	ModeBookmarks         // bookmarks list
 )
 
 type InputAction int
@@ -64,6 +67,15 @@ const (
 	ConfirmPasteMove ConfirmAction = iota
 )
 
+// HintsMode controls which subset of keybind hints are shown in the status bar.
+type HintsMode int
+
+const (
+	HintsFull       HintsMode = iota // all hints (navigation + actions + view/app)
+	HintsNavigation                  // navigation hints only
+	HintsActions                     // file/clipboard/view/app hints only
+)
+
 // ClipOp is the type of pending clipboard operation.
 type ClipOp int
 
@@ -78,6 +90,19 @@ type TreeNode struct {
 	Entry    fs.Entry
 	Depth    int
 	Expanded bool
+
+	// Text-search match fields (set when IsTextMatch == true)
+	IsTextMatch  bool
+	MatchSnippet string
+	MatchLineNum int
+
+	// Pre-built children for text-search file parents (populated from search
+	// results; used by expandNode instead of fs.ScanDir).
+	PendingChildren []TreeNode
+
+	// IsGroupHeader marks non-selectable separator rows (e.g. project labels
+	// in global bookmarks/recents view).
+	IsGroupHeader bool
 }
 
 // ─── Model ────────────────────────────────────────────────────────────────────
@@ -104,6 +129,7 @@ type Model struct {
 	listMode      ListMode
 	detailLevel   DetailLevel
 	showHidden    bool
+	hintsMode     HintsMode
 
 	// Text input (add / rename)
 	textInput      textinput.Model
@@ -126,15 +152,24 @@ type Model struct {
 	statusMsg string
 
 	// Search state
-	searchTools     search.Tools
-	searchRecursive bool
-	searchTextMode  bool
-	searchQuery     string
-	searchResults   []search.Result
-	searchRunning   bool
-	prevNodes       []TreeNode
-	prevRootDir     string
-	searchLiveNodes []TreeNode
+	searchTools       search.Tools
+	searchRecursive   bool
+	searchTextMode    bool
+	searchQuery       string
+	searchResults     []search.Result
+	searchRunning     bool
+	searchInputActive bool // true = text input focused (typing); false = navigating results
+	prevNodes         []TreeNode
+	prevRootDir       string
+	searchLiveNodes   []TreeNode
+
+	// Git state
+	gitRoot           string
+	gitignorePatterns []string
+
+	// App state (recents + bookmarks), persisted to state.json
+	appState   *state.State
+	stateScope bool // false = project-scoped, true = global
 
 	keys resolvedKeys
 }
@@ -142,58 +177,74 @@ type Model struct {
 // ─── Keybinds ─────────────────────────────────────────────────────────────────
 
 type resolvedKeys struct {
-	up           string
-	down         string
-	left         string
-	right        string
-	confirm      string
-	parent       string
-	pageUp       string
-	pageDown     string
-	jumpTop      string
-	jumpBottom   string
-	options      string
-	add          string
-	delete       string
-	toggleList   string
-	rename       string
-	edit         string
-	yank         string
-	cut          string
-	paste        string
-	copyPath     string
-	quit         string
-	details      string
-	toggleHidden string
-	searchKey    string
+	up               string
+	down             string
+	left             string
+	right            string
+	confirm          string
+	parent           string
+	pageUp           string
+	pageDown         string
+	jumpTop          string
+	jumpBottom       string
+	options          string
+	add              string
+	delete           string
+	toggleList       string
+	rename           string
+	edit             string
+	yank             string
+	cut              string
+	paste            string
+	copyPath         string
+	quit             string
+	details          string
+	toggleHidden     string
+	searchKey        string
+	switchTabs       string
+	switchTabsGlobal string
+	ignore           string
+	fullSearch       string
+	cdDir            string
+	openExplorer     string
+	bookmark         string
+	showHints        string
 }
 
 func resolveKeys(k config.Keybinds) resolvedKeys {
 	return resolvedKeys{
-		up:           k.Up,
-		down:         k.Down,
-		left:         k.Left,
-		right:        k.Right,
-		confirm:      k.Confirm,
-		parent:       k.Parent,
-		pageUp:       k.PageUp,
-		pageDown:     k.PageDown,
-		jumpTop:      k.JumpTop,
-		jumpBottom:   k.JumpBottom,
-		options:      k.Options,
-		add:          k.Add,
-		delete:       k.Delete,
-		toggleList:   k.ToggleList,
-		rename:       k.Rename,
-		edit:         k.Edit,
-		yank:         k.Yank,
-		cut:          k.Cut,
-		paste:        k.Paste,
-		copyPath:     k.CopyPath,
-		quit:         k.Quit,
-		details:      k.Details,
-		toggleHidden: k.ToggleHidden,
-		searchKey:    k.Search,
+		up:               k.Up,
+		down:             k.Down,
+		left:             k.Left,
+		right:            k.Right,
+		confirm:          k.Confirm,
+		parent:           k.Parent,
+		pageUp:           k.PageUp,
+		pageDown:         k.PageDown,
+		jumpTop:          k.JumpTop,
+		jumpBottom:       k.JumpBottom,
+		options:          k.Options,
+		add:              k.Add,
+		delete:           k.Delete,
+		toggleList:       k.ToggleList,
+		rename:           k.Rename,
+		edit:             k.Edit,
+		yank:             k.Yank,
+		cut:              k.Cut,
+		paste:            k.Paste,
+		copyPath:         k.CopyPath,
+		quit:             k.Quit,
+		details:          k.Details,
+		toggleHidden:     k.ToggleHidden,
+		searchKey:        k.Search,
+		switchTabs:       k.SwitchTabs,
+		switchTabsGlobal: k.SwitchTabsGlobal,
+		ignore:           k.Ignore,
+		fullSearch:       k.FullSearch,
+		cdDir:            k.CDDir,
+		openExplorer:     k.OpenExplorer,
+		bookmark:         k.Bookmark,
+		showHints:        k.ShowHints,
 	}
 }
 
@@ -216,16 +267,27 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 		listMode = ListDirsAndFiles
 	}
 
+	gitRoot := fs.FindGitRoot(startDir)
+	gitignorePatterns := fs.ReadGitignorePatterns(gitRoot)
+
+	appState, _ := state.Load(config.ConfigDir())
+	if appState == nil {
+		appState = &state.State{}
+	}
+
 	m := &Model{
-		cfg:         cfg,
-		cdFile:      cdFile,
-		openFile:    openFile,
-		rootDir:     startDir,
-		listMode:    listMode,
-		showHidden:  cfg.Display.ShowHidden,
-		textInput:   ti,
-		keys:        resolveKeys(cfg.Keybinds),
-		searchTools: search.DetectTools(),
+		cfg:               cfg,
+		cdFile:            cdFile,
+		openFile:          openFile,
+		rootDir:           startDir,
+		listMode:          listMode,
+		showHidden:        cfg.Display.ShowHidden,
+		textInput:         ti,
+		keys:              resolveKeys(cfg.Keybinds),
+		searchTools:       search.DetectTools(),
+		gitRoot:           gitRoot,
+		gitignorePatterns: gitignorePatterns,
+		appState:          appState,
 	}
 
 	if err := m.initTree(startDir); err != nil {
@@ -237,7 +299,11 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 // ─── Tree helpers ─────────────────────────────────────────────────────────────
 
 func (m *Model) initTree(dir string) error {
-	entries, err := fs.ScanDir(dir, m.showHidden, m.listMode == ListDirsAndFiles)
+	// Re-read gitignore patterns in case they changed (e.g. after an ignore action).
+	if m.gitRoot != "" {
+		m.gitignorePatterns = fs.ReadGitignorePatterns(m.gitRoot)
+	}
+	entries, err := fs.ScanDir(dir, m.showHidden, m.listMode == ListDirsAndFiles, m.gitignorePatterns)
 	if err != nil {
 		return err
 	}
@@ -263,7 +329,24 @@ func (m *Model) expandNode(idx int) error {
 		m.collapseNode(idx)
 		return nil
 	}
-	entries, err := fs.ScanDir(node.Entry.Path, m.showHidden, m.listMode == ListDirsAndFiles)
+	// If this node has pre-built children (text-search match groups), use them.
+	if len(node.PendingChildren) > 0 {
+		childDepth := node.Depth + 1
+		children := make([]TreeNode, len(node.PendingChildren))
+		for i, c := range node.PendingChildren {
+			children[i] = c
+			children[i].Depth = childDepth
+		}
+		after := make([]TreeNode, 0, len(m.nodes)+len(children))
+		after = append(after, m.nodes[:idx+1]...)
+		after = append(after, children...)
+		after = append(after, m.nodes[idx+1:]...)
+		m.nodes = after
+		m.nodes[idx].Expanded = true
+		return nil
+	}
+
+	entries, err := fs.ScanDir(node.Entry.Path, m.showHidden, m.listMode == ListDirsAndFiles, m.gitignorePatterns)
 	if err != nil {
 		return err
 	}
@@ -424,6 +507,15 @@ func (m *Model) adjustOffset() {
 	}
 }
 
+// gitRootOrCwd returns the git root if we're in a repo, otherwise rootDir.
+// Used as the project key for recents and bookmarks.
+func (m *Model) gitRootOrCwd() string {
+	if m.gitRoot != "" {
+		return m.gitRoot
+	}
+	return m.rootDir
+}
+
 func (m *Model) exitWithDir(dir string) tea.Cmd {
 	if m.cdFile != "" {
 		_ = os.WriteFile(m.cdFile, []byte(dir), 0600)
@@ -433,7 +525,13 @@ func (m *Model) exitWithDir(dir string) tea.Cmd {
 
 // exitWithFile writes the selected file path to openFile (for editor
 // integrations) and the file's parent directory to cdFile (for shell cd).
+// Also records the file in recents and persists state.
 func (m *Model) exitWithFile(path string) tea.Cmd {
+	// Record recent.
+	if m.appState != nil {
+		state.AddRecent(m.appState, path, m.gitRootOrCwd())
+		_ = state.Save(config.ConfigDir(), m.appState)
+	}
 	if m.openFile != "" {
 		_ = os.WriteFile(m.openFile, []byte(path), 0600)
 	}
@@ -489,14 +587,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case searchResultMsg:
 		m.searchRunning = false
 		m.searchResults = msg.results
-		entries := search.ResultsToEntries(msg.results)
-		m.nodes = make([]TreeNode, len(entries))
-		for i, e := range entries {
-			m.nodes[i] = TreeNode{Entry: e, Depth: 0}
+		// Populate searchLiveNodes (not m.nodes) so mode stays ModeSearch.
+		if m.searchTextMode {
+			groups := search.GroupTextResults(msg.results)
+			nodes := make([]TreeNode, 0, len(groups))
+			for _, g := range groups {
+				label := g.Entry.Name
+				if g.TotalMatches == 1 {
+					label = fmt.Sprintf("%s (1 match)", g.Entry.Name)
+				} else {
+					label = fmt.Sprintf("%s (%d matches)", g.Entry.Name, g.TotalMatches)
+				}
+				// Build child nodes for each match line.
+				children := make([]TreeNode, 0, len(g.Matches))
+				for _, r := range g.Matches {
+					snippet := strings.TrimSpace(r.Line)
+					if len(snippet) > 60 {
+						snippet = snippet[:60] + "…"
+					}
+					children = append(children, TreeNode{
+						Entry:        fs.Entry{Name: r.Line, Path: r.Path, Type: fs.EntryFile},
+						IsTextMatch:  true,
+						MatchSnippet: snippet,
+						MatchLineNum: r.LineNum,
+					})
+				}
+				e := g.Entry
+				e.Name = label
+				nodes = append(nodes, TreeNode{
+					Entry:           e,
+					PendingChildren: children,
+				})
+			}
+			m.searchLiveNodes = nodes
+		} else {
+			entries := search.ResultsToEntries(msg.results)
+			nodes := make([]TreeNode, len(entries))
+			for i, e := range entries {
+				nodes[i] = TreeNode{Entry: e, Depth: 0}
+			}
+			m.searchLiveNodes = nodes
 		}
 		m.cursor = 0
 		m.offset = 0
-		m.mode = ModeSearchResult
+		// Stay in ModeSearch — no separate ModeSearchResult.
 		return m, nil
 
 	case digitTimeoutMsg:
@@ -548,46 +682,137 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// ── Search input (live filter) ────────────────────────────────────
-		if m.mode == ModeSearch {
-			switch key {
-			case "enter":
-				return m.executeSearch()
-			case "esc":
-				m.nodes = m.prevNodes
-				m.rootDir = m.prevRootDir
-				m.cursor = 0
-				m.offset = 0
-				m.searchLiveNodes = nil
-				m.mode = ModeNormal
-				m.textInput.Blur()
-				return m, nil
+		// ── Cycle hints mode (universal) ─────────────────────────────────
+		if matchKey(key, m.keys.showHints) {
+			switch m.hintsMode {
+			case HintsFull:
+				m.hintsMode = HintsNavigation
+			case HintsNavigation:
+				m.hintsMode = HintsActions
 			default:
-				var cmd tea.Cmd
-				m.textInput, cmd = m.textInput.Update(msg)
-				m.applyLiveFilter()
-				return m, cmd
+				m.hintsMode = HintsFull
+			}
+			return m, nil
+		}
+
+		// ── Search mode ───────────────────────────────────────────────────
+		//
+		// Two sub-states controlled by m.searchInputActive:
+		//   true  = text input focused; user is typing the query
+		//   false = results shown; user is navigating the result list
+		if m.mode == ModeSearch {
+			if m.searchInputActive {
+				// ── Typing state ──────────────────────────────────────────
+				switch {
+				case key == "enter":
+					// Run full search, switch to navigation state.
+					return m.runFullSearch()
+				case key == "esc":
+					// Exit search entirely.
+					m.nodes = m.prevNodes
+					m.rootDir = m.prevRootDir
+					m.cursor = 0
+					m.offset = 0
+					m.searchLiveNodes = nil
+					m.searchRunning = false
+					m.searchInputActive = false
+					m.mode = ModeNormal
+					m.textInput.Blur()
+					return m, nil
+				default:
+					// Feed all other keys to the text input for typing.
+					var cmd tea.Cmd
+					m.textInput, cmd = m.textInput.Update(msg)
+					m.applyLiveFilter()
+					return m, cmd
+				}
+			} else {
+				// ── Navigation state (results shown, input blurred) ───────
+				switch {
+				case key == "enter":
+					// Confirm the highlighted result.
+					return m.confirmSearchSelection()
+				case key == "esc":
+					// Re-focus input so the user can modify the query.
+					m.searchInputActive = true
+					m.textInput.Focus()
+					return m, textinput.Blink
+				case matchKey(key, m.keys.quit):
+					// q exits search entirely.
+					m.nodes = m.prevNodes
+					m.rootDir = m.prevRootDir
+					m.cursor = 0
+					m.offset = 0
+					m.searchLiveNodes = nil
+					m.searchRunning = false
+					m.mode = ModeNormal
+					m.textInput.Blur()
+					return m, nil
+				case matchKey(key, m.keys.up):
+					m.cursor--
+					m.clampSearchCursor()
+					m.adjustOffset()
+					return m, nil
+				case matchKey(key, m.keys.down):
+					m.cursor++
+					m.clampSearchCursor()
+					m.adjustOffset()
+					return m, nil
+				case matchKey(key, m.keys.right):
+					// Expand a text-search file node to show match snippets.
+					return m.confirmSearchSelection()
+				case matchKey(key, m.keys.left):
+					// Collapse an expanded text-search file node.
+					nodes := m.searchLiveNodes
+					if len(nodes) == 0 || m.cursor >= len(nodes) {
+						return m, nil
+					}
+					node := nodes[m.cursor]
+					if node.Expanded {
+						m.collapseSearchNode(m.cursor)
+					} else if node.IsTextMatch || node.Depth > 0 {
+						// Jump to parent.
+						for i := m.cursor - 1; i >= 0; i-- {
+							if nodes[i].Depth < node.Depth {
+								m.cursor = i
+								m.adjustOffset()
+								break
+							}
+						}
+					}
+					return m, nil
+				case matchKey(key, m.keys.fullSearch):
+					// Re-run the search with the current query.
+					m.searchInputActive = true
+					m.textInput.Focus()
+					return m.runFullSearch()
+				}
+				return m, nil
 			}
 		}
 
-		// ── Search result mode ────────────────────────────────────────────
-		if m.mode == ModeSearchResult {
+		// ── Recents mode ─────────────────────────────────────────────────
+		if m.mode == ModeRecents {
 			switch {
 			case key == "esc" || matchKey(key, m.keys.quit):
-				m.nodes = m.prevNodes
-				m.rootDir = m.prevRootDir
-				m.cursor = 0
-				m.offset = 0
-				m.mode = ModeNormal
+				m.restoreFromTab()
+				return m, nil
+			case matchKey(key, m.keys.switchTabs):
+				// Cycle to bookmarks.
+				m.enterBookmarks()
+				return m, nil
+			case matchKey(key, m.keys.switchTabsGlobal):
+				m.stateScope = !m.stateScope
+				m.populateRecents()
 				return m, nil
 			case matchKey(key, m.keys.up):
 				m.cursor--
-				m.clampCursor()
+				m.clampCursorSkipHeaders()
 				m.adjustOffset()
 				return m, nil
 			case matchKey(key, m.keys.down):
 				m.cursor++
-				m.clampCursor()
+				m.clampCursorSkipHeaders()
 				m.adjustOffset()
 				return m, nil
 			case matchKey(key, m.keys.confirm):
@@ -599,19 +824,84 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if err := m.initTree(e.Path); err != nil {
 						m.errorMsg = err.Error()
 						m.mode = ModeError
-					} else {
-						m.mode = ModeNormal
-						m.exitWithDir(e.Path)
+						return m, nil
 					}
-				} else {
-					if m.openFile != "" {
-						return m, m.exitWithFile(e.Path)
-					}
-					return m, m.exitWithDir(filepath.Dir(e.Path))
+					m.mode = ModeNormal
+					return m, nil
+				}
+				return m, m.exitWithFile(e.Path)
+			case matchKey(key, m.keys.delete):
+				e := m.selectedEntry()
+				if e != nil && m.appState != nil {
+					state.RemoveRecent(m.appState, e.Path)
+					_ = state.Save(config.ConfigDir(), m.appState)
+					m.populateRecents()
 				}
 				return m, nil
-			case key == "/" || matchKey(key, m.keys.searchKey):
-				return m.openSearchInput()
+			}
+			return m, nil
+		}
+
+		// ── Bookmarks mode ────────────────────────────────────────────────
+		if m.mode == ModeBookmarks {
+			switch {
+			case key == "esc" || matchKey(key, m.keys.quit):
+				m.restoreFromTab()
+				return m, nil
+			case matchKey(key, m.keys.switchTabs):
+				// Cycle back to normal.
+				m.restoreFromTab()
+				return m, nil
+			case matchKey(key, m.keys.switchTabsGlobal):
+				m.stateScope = !m.stateScope
+				m.populateBookmarks()
+				return m, nil
+			case matchKey(key, m.keys.up):
+				m.cursor--
+				m.clampCursorSkipHeaders()
+				m.adjustOffset()
+				return m, nil
+			case matchKey(key, m.keys.down):
+				m.cursor++
+				m.clampCursorSkipHeaders()
+				m.adjustOffset()
+				return m, nil
+			case matchKey(key, m.keys.confirm):
+				e := m.selectedEntry()
+				if e == nil {
+					return m, nil
+				}
+				if e.IsDir() {
+					if err := m.initTree(e.Path); err != nil {
+						m.errorMsg = err.Error()
+						m.mode = ModeError
+						return m, nil
+					}
+					m.mode = ModeNormal
+					return m, nil
+				}
+				return m, m.exitWithFile(e.Path)
+			case matchKey(key, m.keys.delete):
+				e := m.selectedEntry()
+				if e != nil && m.appState != nil {
+					state.RemoveBookmark(m.appState, e.Path)
+					_ = state.Save(config.ConfigDir(), m.appState)
+					m.populateBookmarks()
+				}
+				return m, nil
+			case matchKey(key, m.keys.rename):
+				e := m.selectedEntry()
+				if e != nil {
+					m.inputAction = InputRename
+					m.pendingPath = e.Path
+					m.textInput.Reset()
+					m.textInput.Placeholder = filepath.Base(e.Path)
+					m.textInput.SetValue(filepath.Base(e.Path))
+					m.textInput.Focus()
+					m.mode = ModeInput
+					return m, textinput.Blink
+				}
+				return m, nil
 			}
 			return m, nil
 		}
@@ -628,18 +918,95 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.exitWithoutCD()
 		}
 
-		// Confirm / Enter: cd into dir, or open file in editor/default app
+		// Switch tabs: Normal → Recents
+		if matchKey(key, m.keys.switchTabs) {
+			m.enterRecents()
+			return m, nil
+		}
+
+		// Confirm / Enter: expand dir in-tree, or open file
 		if matchKey(key, m.keys.confirm) {
 			e := m.selectedEntry()
 			if e != nil && e.IsDir() {
-				return m, m.exitWithDir(e.Path)
+				// Expand/collapse the directory in-place.
+				node := m.selectedNode()
+				wasExpanded := node.Expanded
+				parentDepth := node.Depth
+				if err := m.expandNode(m.cursor); err != nil {
+					m.errorMsg = err.Error()
+					m.mode = ModeError
+				} else if !wasExpanded {
+					// Move cursor into first child.
+					if m.cursor+1 < len(m.nodes) && m.nodes[m.cursor+1].Depth > parentDepth {
+						m.cursor++
+						m.adjustOffset()
+					}
+				}
 			} else if e != nil {
 				if m.openFile != "" {
 					return m, m.exitWithFile(e.Path)
 				}
 				return m, openDefaultCmd(e.Path, m.cfg.Apps.Opener)
 			}
+			return m, nil
+		}
+
+		// CD into directory (old Enter behaviour) — exits listicles and cds shell.
+		if matchKey(key, m.keys.cdDir) {
+			e := m.selectedEntry()
+			if e != nil && e.IsDir() {
+				return m, m.exitWithDir(e.Path)
+			} else if e != nil {
+				return m, m.exitWithDir(filepath.Dir(e.Path))
+			}
 			return m, m.exitWithDir(m.rootDir)
+		}
+
+		// Open in system file explorer.
+		if matchKey(key, m.keys.openExplorer) {
+			e := m.selectedEntry()
+			target := m.rootDir
+			if e != nil {
+				target = e.Path
+			}
+			return m, openDefaultCmd(target, m.cfg.Apps.Opener)
+		}
+
+		// Bookmark current selection.
+		if matchKey(key, m.keys.bookmark) {
+			e := m.selectedEntry()
+			if e != nil && m.appState != nil {
+				state.AddBookmark(m.appState, e.Path, m.gitRootOrCwd(), "")
+				_ = state.Save(config.ConfigDir(), m.appState)
+				m.statusMsg = "bookmarked"
+				return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg {
+					return clearStatusMsg{}
+				})
+			}
+			return m, nil
+		}
+
+		// Ignore (add to .gitignore) — only when in a git repo.
+		if matchKey(key, m.keys.ignore) && m.gitRoot != "" {
+			e := m.selectedEntry()
+			if e != nil {
+				rel, err := filepath.Rel(m.gitRoot, e.Path)
+				if err != nil {
+					rel = e.Name
+				}
+				if err := fs.AppendGitignore(m.gitRoot, rel); err != nil {
+					m.errorMsg = fmt.Sprintf("Could not update .gitignore: %v", err)
+					m.mode = ModeError
+					return m, nil
+				}
+				m.gitignorePatterns = fs.ReadGitignorePatterns(m.gitRoot)
+				_ = m.rebuildTree()
+				m.statusMsg = fmt.Sprintf("added %q to .gitignore", rel)
+				return m, tea.Tick(2000*time.Millisecond, func(_ time.Time) tea.Msg {
+					return clearStatusMsg{}
+				})
+			}
+			return m, nil
 		}
 
 		// Navigate up / down
@@ -990,7 +1357,23 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 		}
 
 	case InputRename:
-		if val == "" || val == filepath.Base(m.pendingPath) {
+		if val == "" {
+			return m, nil
+		}
+		// If we're renaming a bookmark label (from ModeBookmarks), update state.
+		if m.appState != nil {
+			for _, b := range m.appState.Bookmarks {
+				if b.Path == m.pendingPath {
+					state.RenameBookmark(m.appState, m.pendingPath, val)
+					_ = state.Save(config.ConfigDir(), m.appState)
+					m.populateBookmarks()
+					m.mode = ModeBookmarks
+					return m, nil
+				}
+			}
+		}
+		// Otherwise it's a filesystem rename.
+		if val == filepath.Base(m.pendingPath) {
 			return m, nil
 		}
 		m.confirmAction = ConfirmRename
@@ -1112,20 +1495,45 @@ func (m Model) openEditor(path string) tea.Cmd {
 	})
 }
 
-// openDefaultCmd opens path in the default application using tea.ExecProcess,
-// which suspends the TUI for the duration of the subprocess. This handles both
-// GUI apps (imperceptible pause) and terminal apps (e.g. less, man) correctly,
-// since the alt-screen is released while the subprocess runs and restored after.
+// openDefaultCmd opens path in the system file explorer using tea.ExecProcess.
+// For files, it reveals the file in its containing folder. For directories, it
+// opens the directory directly. The behaviour is OS-specific:
+//   - macOS:   open -R <file>  /  open <dir>
+//   - Windows: explorer /select,<file>  /  explorer <dir>
+//   - Linux:   xdg-open <parent-dir>  /  xdg-open <dir>
+//
+// If a custom opener is set in config it is used as-is with the path as the
+// sole argument (no reveal-in-folder logic is applied).
 func openDefaultCmd(path string, opener string) tea.Cmd {
-	if opener == "" {
+	var c *exec.Cmd
+	if opener != "" {
+		c = exec.Command(opener, path)
+	} else {
+		info, err := os.Stat(path)
+		isDir := err == nil && info.IsDir()
+
 		switch runtime.GOOS {
 		case "darwin":
-			opener = "open"
-		default:
-			opener = "xdg-open"
+			if isDir {
+				c = exec.Command("open", path)
+			} else {
+				c = exec.Command("open", "-R", path)
+			}
+		case "windows":
+			if isDir {
+				c = exec.Command("explorer", path)
+			} else {
+				// /select highlights the file in Explorer
+				c = exec.Command("explorer", "/select,"+path)
+			}
+		default: // Linux and other Unix-like systems
+			if isDir {
+				c = exec.Command("xdg-open", path)
+			} else {
+				c = exec.Command("xdg-open", filepath.Dir(path))
+			}
 		}
 	}
-	c := exec.Command(opener, path)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
 			return errorMsg(fmt.Sprintf("Could not open %q: %v", path, err))
@@ -1142,7 +1550,10 @@ func (m Model) openSearchInput() (tea.Model, tea.Cmd) {
 	m.prevRootDir = m.rootDir
 	m.searchRecursive = false
 	m.searchTextMode = false
+	m.searchQuery = ""
 	m.searchLiveNodes = nil
+	m.searchRunning = false
+	m.searchInputActive = true
 	m.textInput.Reset()
 	m.textInput.Placeholder = "query  (-r recursive  -t text-in-files  -rt both)"
 	m.textInput.SetValue("")
@@ -1200,25 +1611,144 @@ func (m *Model) applyLiveFilter() {
 	m.offset = 0
 }
 
-func (m Model) executeSearch() (tea.Model, tea.Cmd) {
+// confirmSearchSelection confirms the currently highlighted search result.
+//   - Text-match child (line snippet): open the parent file.
+//   - Node with PendingChildren (text-search file parent): toggle expand/collapse.
+//   - Regular dir: toggle expand/collapse.
+//   - Regular file: open.
+func (m Model) confirmSearchSelection() (tea.Model, tea.Cmd) {
+	if len(m.searchLiveNodes) == 0 || m.cursor >= len(m.searchLiveNodes) {
+		return m, nil
+	}
+	node := m.searchLiveNodes[m.cursor]
+
+	// Text-match child row: open the file.
+	if node.IsTextMatch {
+		if m.openFile != "" {
+			return m, m.exitWithFile(node.Entry.Path)
+		}
+		return m, openDefaultCmd(node.Entry.Path, m.cfg.Apps.Opener)
+	}
+
+	// Node with pending children = text-search file parent: toggle expand.
+	if len(node.PendingChildren) > 0 || node.Expanded {
+		if node.Expanded {
+			m.collapseSearchNode(m.cursor)
+		} else {
+			m.expandSearchNode(m.cursor)
+			// Move cursor into first child.
+			if m.cursor+1 < len(m.searchLiveNodes) && m.searchLiveNodes[m.cursor+1].Depth > node.Depth {
+				m.cursor++
+				m.adjustOffset()
+			}
+		}
+		return m, nil
+	}
+
+	e := node.Entry
+	if e.IsDir() {
+		if node.Expanded {
+			m.collapseSearchNode(m.cursor)
+		} else {
+			m.expandSearchNode(m.cursor)
+			if m.cursor+1 < len(m.searchLiveNodes) && m.searchLiveNodes[m.cursor+1].Depth > node.Depth {
+				m.cursor++
+				m.adjustOffset()
+			}
+		}
+		return m, nil
+	}
+
+	// Plain file: open or exit.
+	if m.openFile != "" {
+		return m, m.exitWithFile(e.Path)
+	}
+	return m, openDefaultCmd(e.Path, m.cfg.Apps.Opener)
+}
+
+// expandSearchNode inserts the PendingChildren of node at idx into
+// m.searchLiveNodes directly after idx, at depth+1.
+func (m *Model) expandSearchNode(idx int) {
+	if idx < 0 || idx >= len(m.searchLiveNodes) {
+		return
+	}
+	node := m.searchLiveNodes[idx]
+	if node.Expanded || len(node.PendingChildren) == 0 {
+		return
+	}
+	childDepth := node.Depth + 1
+	children := make([]TreeNode, len(node.PendingChildren))
+	for i, c := range node.PendingChildren {
+		children[i] = c
+		children[i].Depth = childDepth
+	}
+	after := make([]TreeNode, 0, len(m.searchLiveNodes)+len(children))
+	after = append(after, m.searchLiveNodes[:idx+1]...)
+	after = append(after, children...)
+	after = append(after, m.searchLiveNodes[idx+1:]...)
+	m.searchLiveNodes = after
+	m.searchLiveNodes[idx].Expanded = true
+}
+
+// collapseSearchNode removes children of node at idx from m.searchLiveNodes.
+func (m *Model) collapseSearchNode(idx int) {
+	if idx < 0 || idx >= len(m.searchLiveNodes) {
+		return
+	}
+	if !m.searchLiveNodes[idx].Expanded {
+		return
+	}
+	targetDepth := m.searchLiveNodes[idx].Depth
+	end := idx + 1
+	for end < len(m.searchLiveNodes) && m.searchLiveNodes[end].Depth > targetDepth {
+		end++
+	}
+	// If cursor is inside the collapsed children, pull it back to the parent.
+	if m.cursor > idx && m.cursor < end {
+		m.cursor = idx
+		m.adjustOffset()
+	}
+	collapsed := make([]TreeNode, 0, len(m.searchLiveNodes)-(end-idx-1))
+	collapsed = append(collapsed, m.searchLiveNodes[:idx+1]...)
+	collapsed = append(collapsed, m.searchLiveNodes[end:]...)
+	m.searchLiveNodes = collapsed
+	m.searchLiveNodes[idx].Expanded = false
+}
+
+// clampSearchCursor keeps m.cursor within the bounds of m.searchLiveNodes.
+func (m *Model) clampSearchCursor() {
+	n := len(m.searchLiveNodes)
+	if n == 0 {
+		m.cursor = 0
+		return
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= n {
+		m.cursor = n - 1
+	}
+}
+
+// runFullSearch triggers the fd/rg subprocess search. Results flow back via
+// searchResultMsg and populate searchLiveNodes (mode stays ModeSearch).
+// The text input is blurred so the user can navigate results with arrow keys.
+func (m Model) runFullSearch() (tea.Model, tea.Cmd) {
 	raw := m.textInput.Value()
-	m.textInput.Blur()
 	query, recursive, textMode := parseSearchFlags(raw)
 	query = strings.TrimSpace(query)
 	if query == "" {
-		m.nodes = m.prevNodes
-		m.rootDir = m.prevRootDir
-		m.searchLiveNodes = nil
-		m.mode = ModeNormal
 		return m, nil
 	}
 	m.searchQuery = query
 	m.searchRecursive = recursive
 	m.searchTextMode = textMode
 	m.searchRunning = true
+	m.searchInputActive = false // switch to navigation state
+	m.textInput.Blur()
 	m.searchLiveNodes = nil
 	req := search.Request{
-		Dir:       m.rootDir,
+		Dir:       m.prevRootDir,
 		Query:     query,
 		Recursive: recursive,
 		TextMode:  textMode,
@@ -1231,6 +1761,157 @@ func (m Model) executeSearch() (tea.Model, tea.Cmd) {
 			results = append(results, r)
 		})
 		return searchResultMsg{results: results}
+	}
+}
+
+// ─── Recents / Bookmarks helpers ─────────────────────────────────────────────
+
+// enterRecents saves the current tree snapshot and switches to ModeRecents.
+func (m *Model) enterRecents() {
+	m.prevNodes = make([]TreeNode, len(m.nodes))
+	copy(m.prevNodes, m.nodes)
+	m.prevRootDir = m.rootDir
+	m.stateScope = false
+	m.populateRecents()
+	m.mode = ModeRecents
+}
+
+// enterBookmarks switches from ModeRecents to ModeBookmarks (snapshot already saved).
+func (m *Model) enterBookmarks() {
+	m.stateScope = false
+	m.populateBookmarks()
+	m.mode = ModeBookmarks
+}
+
+// restoreFromTab restores the tree from the snapshot saved before entering
+// recents/bookmarks and returns to ModeNormal.
+func (m *Model) restoreFromTab() {
+	m.nodes = m.prevNodes
+	m.rootDir = m.prevRootDir
+	m.cursor = 0
+	m.offset = 0
+	m.mode = ModeNormal
+}
+
+// populateRecents fills m.nodes with recent entries filtered by scope.
+func (m *Model) populateRecents() {
+	var entries []state.RecentEntry
+	if m.appState == nil {
+		m.nodes = nil
+		m.cursor = 0
+		m.offset = 0
+		return
+	}
+	if m.stateScope {
+		entries = m.appState.Recents
+	} else {
+		entries = state.RecentsForRoot(m.appState, m.gitRootOrCwd())
+	}
+	nodes := make([]TreeNode, 0, len(entries))
+	for _, r := range entries {
+		entryType := fs.EntryFile
+		if info, err := os.Stat(r.Path); err == nil && info.IsDir() {
+			entryType = fs.EntryDir
+		}
+		nodes = append(nodes, TreeNode{
+			Entry: fs.Entry{
+				Name: filepath.Base(r.Path),
+				Path: r.Path,
+				Type: entryType,
+			},
+		})
+	}
+	m.nodes = nodes
+	m.cursor = 0
+	m.offset = 0
+}
+
+// populateBookmarks fills m.nodes with bookmark entries, adding group headers
+// when in global scope.
+func (m *Model) populateBookmarks() {
+	if m.appState == nil {
+		m.nodes = nil
+		m.cursor = 0
+		m.offset = 0
+		return
+	}
+
+	nodes := []TreeNode{}
+
+	if m.stateScope {
+		// Group by RootDir.
+		seenRoots := []string{}
+		rootMap := map[string][]state.BookmarkEntry{}
+		for _, b := range m.appState.Bookmarks {
+			if _, ok := rootMap[b.RootDir]; !ok {
+				seenRoots = append(seenRoots, b.RootDir)
+			}
+			rootMap[b.RootDir] = append(rootMap[b.RootDir], b)
+		}
+		for _, root := range seenRoots {
+			// Group header (non-selectable).
+			nodes = append(nodes, TreeNode{
+				Entry:         fs.Entry{Name: root, Path: root, Type: fs.EntryDir},
+				IsGroupHeader: true,
+			})
+			for _, b := range rootMap[root] {
+				nodes = append(nodes, bookmarkToNode(b))
+			}
+		}
+	} else {
+		for _, b := range state.BookmarksForRoot(m.appState, m.gitRootOrCwd()) {
+			nodes = append(nodes, bookmarkToNode(b))
+		}
+	}
+
+	m.nodes = nodes
+	m.cursor = 0
+	// Skip past any leading group header.
+	m.clampCursorSkipHeaders()
+	m.offset = 0
+}
+
+func bookmarkToNode(b state.BookmarkEntry) TreeNode {
+	entryType := fs.EntryFile
+	if info, err := os.Stat(b.Path); err == nil && info.IsDir() {
+		entryType = fs.EntryDir
+	}
+	name := b.Name
+	if name == "" {
+		name = filepath.Base(b.Path)
+	}
+	return TreeNode{
+		Entry: fs.Entry{
+			Name: name,
+			Path: b.Path,
+			Type: entryType,
+		},
+	}
+}
+
+// clampCursorSkipHeaders clamps the cursor and skips past group header rows.
+func (m *Model) clampCursorSkipHeaders() {
+	n := len(m.nodes)
+	if n == 0 {
+		m.cursor = 0
+		return
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= n {
+		m.cursor = n - 1
+	}
+	// Skip forward over headers.
+	for m.cursor < n && m.nodes[m.cursor].IsGroupHeader {
+		m.cursor++
+	}
+	// If we ran off the end, skip backward.
+	if m.cursor >= n {
+		m.cursor = n - 1
+		for m.cursor > 0 && m.nodes[m.cursor].IsGroupHeader {
+			m.cursor--
+		}
 	}
 }
 

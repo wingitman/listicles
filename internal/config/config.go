@@ -11,30 +11,38 @@ import (
 // Key values use BubbleTea key names: "up", "down", "left", "right", "enter",
 // "pgup", "pgdown", "home", "end", "ctrl+u", or single characters like "q".
 type Keybinds struct {
-	Up           string `toml:"up"`
-	Down         string `toml:"down"`
-	Left         string `toml:"left"`
-	Right        string `toml:"right"`
-	Confirm      string `toml:"confirm"`
-	Parent       string `toml:"parent"`
-	PageUp       string `toml:"page_up"`
-	PageDown     string `toml:"page_down"`
-	JumpTop      string `toml:"jump_top"`
-	JumpBottom   string `toml:"jump_bottom"`
-	Options      string `toml:"options"`
-	Add          string `toml:"add"`
-	Delete       string `toml:"delete"`
-	ToggleList   string `toml:"toggle_list"`
-	Rename       string `toml:"rename"`
-	Edit         string `toml:"edit"`
-	Yank         string `toml:"yank"`
-	Cut          string `toml:"cut"`
-	Paste        string `toml:"paste"`
-	CopyPath     string `toml:"copy_path"`
-	Quit         string `toml:"quit"`
-	Details      string `toml:"details"`
-	ToggleHidden string `toml:"toggle_hidden"`
-	Search       string `toml:"search"`
+	Up               string `toml:"up"`
+	Down             string `toml:"down"`
+	Left             string `toml:"left"`
+	Right            string `toml:"right"`
+	Confirm          string `toml:"confirm"`
+	Parent           string `toml:"parent"`
+	PageUp           string `toml:"page_up"`
+	PageDown         string `toml:"page_down"`
+	JumpTop          string `toml:"jump_top"`
+	JumpBottom       string `toml:"jump_bottom"`
+	Options          string `toml:"options"`
+	Add              string `toml:"add"`
+	Delete           string `toml:"delete"`
+	ToggleList       string `toml:"toggle_list"`
+	Rename           string `toml:"rename"`
+	Edit             string `toml:"edit"`
+	Yank             string `toml:"yank"`
+	Cut              string `toml:"cut"`
+	Paste            string `toml:"paste"`
+	CopyPath         string `toml:"copy_path"`
+	Quit             string `toml:"quit"`
+	Details          string `toml:"details"`
+	ToggleHidden     string `toml:"toggle_hidden"`
+	Search           string `toml:"search"`
+	SwitchTabs       string `toml:"switch_tabs"`
+	SwitchTabsGlobal string `toml:"switch_tabs_global"`
+	Ignore           string `toml:"ignore"`
+	FullSearch       string `toml:"full_search"`
+	CDDir            string `toml:"cd_dir"`
+	OpenExplorer     string `toml:"open_explorer"`
+	Bookmark         string `toml:"bookmark"`
+	ShowHints        string `toml:"show_hints"`
 }
 
 // Display holds display preferences.
@@ -62,34 +70,42 @@ type Config struct {
 func Default() *Config {
 	return &Config{
 		Keybinds: Keybinds{
-			Up:           "up",
-			Down:         "down",
-			Left:         "left",
-			Right:        "right",
-			Confirm:      "enter",
-			Parent:       "0",
-			PageUp:       "pgup",
-			PageDown:     "pgdown",
-			JumpTop:      "home",
-			JumpBottom:   "end",
-			Options:      "o",
-			Add:          "a",
-			Delete:       "d",
-			ToggleList:   "f",
-			Rename:       "r",
-			Edit:         "e",
-			Yank:         "y",
-			Cut:          "x",
-			Paste:        "p",
-			CopyPath:     "Y",
-			Quit:         "q",
-			Details:      "i",
-			ToggleHidden: ".",
-			Search:       "/",
+			Up:               "up",
+			Down:             "down",
+			Left:             "left",
+			Right:            "right",
+			Confirm:          "enter",
+			Parent:           "0",
+			PageUp:           "pgup",
+			PageDown:         "pgdown",
+			JumpTop:          "home",
+			JumpBottom:       "end",
+			Options:          "o",
+			Add:              "a",
+			Delete:           "d",
+			ToggleList:       "f",
+			Rename:           "r",
+			Edit:             "e",
+			Yank:             "y",
+			Cut:              "x",
+			Paste:            "p",
+			CopyPath:         "Y",
+			Quit:             "q",
+			Details:          "i",
+			ToggleHidden:     ".",
+			Search:           "/",
+			SwitchTabs:       "\t",
+			SwitchTabsGlobal: "g",
+			Ignore:           "I",
+			FullSearch:       "ctrl+f",
+			CDDir:            "c",
+			OpenExplorer:     "E",
+			Bookmark:         "b",
+			ShowHints:        "?",
 		},
 		Display: Display{
 			ShowHidden:       false,
-			DefaultListMode:  "dirs",
+			DefaultListMode:  "dirs_and_files",
 			SearchMaxResults: 20,
 			ParentDepth:      1,
 		},
@@ -206,11 +222,19 @@ copy_path     = "Y"
 quit          = "q"
 details       = "i"
 toggle_hidden = "."
-search        = "/"
+search             = "/"
+switch_tabs        = "	"
+switch_tabs_global = "g"
+ignore             = "I"
+full_search        = "ctrl+f"
+cd_dir             = "c"
+open_explorer      = "E"
+bookmark           = "b"
+show_hints         = "?"
 
 [display]
 show_hidden        = false
-default_list_mode  = "dirs"   # "dirs" or "dirs_and_files"
+default_list_mode  = "dirs_and_files"   # "dirs" or "dirs_and_files"
 
 # Max results shown during live / subprocess search (min 1)
 search_max_results = 20

@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +26,7 @@ type Entry struct {
 	Size     int64
 	NumFiles int
 	NumDirs  int
+	Ignored  bool // true if matched by a .gitignore pattern
 }
 
 // IsDir returns true if this entry is a directory.
@@ -52,7 +54,10 @@ func HumanSize(b int64) string {
 }
 
 // ScanDir lists entries in dirPath according to showHidden and showFiles flags.
-func ScanDir(dirPath string, showHidden bool, showFiles bool) ([]Entry, error) {
+// gitignorePatterns is a slice of patterns from .gitignore; matching entries
+// have their Ignored field set to true but are still included in the result so
+// they can be rendered dimmed when show_hidden is on.
+func ScanDir(dirPath string, showHidden bool, showFiles bool, gitignorePatterns []string) ([]Entry, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -68,14 +73,21 @@ func ScanDir(dirPath string, showHidden bool, showFiles bool) ([]Entry, error) {
 		}
 
 		fullPath := filepath.Join(dirPath, name)
+		ignored := matchesGitignore(name, fullPath, gitignorePatterns)
+
+		// Skip gitignored entries unless show_hidden is on (same logic as
+		// hidden files — they are only visible when the user opts in).
+		if ignored && !showHidden {
+			continue
+		}
 
 		if de.IsDir() {
-			entry := Entry{
-				Name: name,
-				Path: fullPath,
-				Type: EntryDir,
-			}
-			result = append(result, entry)
+			result = append(result, Entry{
+				Name:    name,
+				Path:    fullPath,
+				Type:    EntryDir,
+				Ignored: ignored,
+			})
 		} else if showFiles {
 			info, err := de.Info()
 			var size int64
@@ -83,10 +95,11 @@ func ScanDir(dirPath string, showHidden bool, showFiles bool) ([]Entry, error) {
 				size = info.Size()
 			}
 			result = append(result, Entry{
-				Name: name,
-				Path: fullPath,
-				Type: EntryFile,
-				Size: size,
+				Name:    name,
+				Path:    fullPath,
+				Type:    EntryFile,
+				Size:    size,
+				Ignored: ignored,
 			})
 		}
 	}
@@ -200,6 +213,117 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// ─── Git helpers ─────────────────────────────────────────────────────────────
+
+// FindGitRoot walks up from path looking for a directory containing ".git".
+// Returns the git root path, or "" if not inside a git repository.
+func FindGitRoot(path string) string {
+	cur := path
+	for {
+		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+			return cur
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return ""
+		}
+		cur = parent
+	}
+}
+
+// ReadGitignorePatterns reads <gitRoot>/.gitignore and returns the non-comment,
+// non-empty lines as patterns. Returns nil when the file doesn't exist.
+func ReadGitignorePatterns(gitRoot string) []string {
+	if gitRoot == "" {
+		return nil
+	}
+	f, err := os.Open(filepath.Join(gitRoot, ".gitignore"))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var patterns []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		patterns = append(patterns, line)
+	}
+	return patterns
+}
+
+// AppendGitignore appends relPath as a new line to <gitRoot>/.gitignore,
+// creating the file if it does not exist. relPath should be relative to gitRoot.
+func AppendGitignore(gitRoot, relPath string) error {
+	p := filepath.Join(gitRoot, ".gitignore")
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Ensure there is a trailing newline before our entry.
+	info, err := f.Stat()
+	if err == nil && info.Size() > 0 {
+		// Read last byte to check for newline.
+		buf := make([]byte, 1)
+		rf, rerr := os.Open(p)
+		if rerr == nil {
+			if _, serr := rf.Seek(-1, 2); serr == nil {
+				rf.Read(buf) //nolint:errcheck
+			}
+			rf.Close()
+		}
+		if buf[0] != '\n' {
+			fmt.Fprintln(f)
+		}
+	}
+	_, err = fmt.Fprintln(f, relPath)
+	return err
+}
+
+// matchesGitignore reports whether name or fullPath matches any of the given
+// gitignore patterns. This implements a lightweight subset of gitignore rules:
+//   - exact name match (e.g. "node_modules")
+//   - trailing-slash dir pattern (e.g. "dist/") matched by name
+//   - leading-slash anchored patterns (e.g. "/vendor") matched by name
+//   - simple glob via filepath.Match on the base name
+func matchesGitignore(name, fullPath string, patterns []string) bool {
+	for _, pat := range patterns {
+		if pat == "" {
+			continue
+		}
+		// Negation patterns (!) are not supported in this lightweight impl.
+		if strings.HasPrefix(pat, "!") {
+			continue
+		}
+		// Strip trailing slash (marks directory patterns, but we match both).
+		clean := strings.TrimSuffix(pat, "/")
+		// Strip leading slash (anchors to repo root — we match by name only).
+		clean = strings.TrimPrefix(clean, "/")
+		if clean == "" {
+			continue
+		}
+		// Exact name match.
+		if clean == name {
+			return true
+		}
+		// Glob match on base name.
+		if matched, err := filepath.Match(clean, name); err == nil && matched {
+			return true
+		}
+		// Glob match on full path (for patterns containing path separators).
+		if strings.Contains(clean, "/") {
+			if matched, err := filepath.Match(clean, fullPath); err == nil && matched {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func copyDir(src, dst string) error {

@@ -275,10 +275,10 @@ func TestIntegration_StatusBar_ShowsKeyHints(t *testing.T) {
 	tm := newTestModel(t, dir)
 
 	// Wait for the status bar to appear (contains "enter" for the confirm key)
-	// and the nav hint
+	// and the nav hint (Nano-style: "[↑/↓/←/→]Nav")
 	teatest.WaitFor(t, tm.Output(), func(bts []byte) bool {
 		s := string(bts)
-		return strings.Contains(s, "enter") && strings.Contains(s, "nav")
+		return strings.Contains(s, "enter") && strings.Contains(s, "Nav")
 	}, teatest.WithDuration(5*time.Second))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})

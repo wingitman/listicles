@@ -186,21 +186,16 @@ func streamLines(cmd *exec.Cmd, _ string, cb func(string)) error {
 	return nil
 }
 
-// ResultsToEntries converts search results to fs.Entry slices for display.
+// ResultsToEntries converts name-search results to fs.Entry slices for display.
+// For text-search results, use GroupTextResults instead.
 func ResultsToEntries(results []Result) []fs.Entry {
 	seen := map[string]bool{}
 	var entries []fs.Entry
 	for _, r := range results {
-		key := r.Path
-		if r.LineNum > 0 {
-			// For text matches, show each match line as a separate entry
-			// but use a synthetic key to avoid dedup
-			key = r.Path + ":" + itoa(r.LineNum)
-		}
-		if seen[key] {
+		if seen[r.Path] {
 			continue
 		}
-		seen[key] = true
+		seen[r.Path] = true
 
 		info, err := os.Stat(r.Path)
 		entryType := fs.EntryFile
@@ -212,20 +207,63 @@ func ResultsToEntries(results []Result) []fs.Entry {
 			size = info.Size()
 		}
 
-		name := filepath.Base(r.Path)
-		if r.LineNum > 0 {
-			// Show line number in name for text matches
-			name = filepath.Base(r.Path) + ":" + itoa(r.LineNum)
-		}
-
 		entries = append(entries, fs.Entry{
-			Name: name,
+			Name: filepath.Base(r.Path),
 			Path: r.Path,
 			Type: entryType,
 			Size: size,
 		})
 	}
 	return entries
+}
+
+// GroupedTextResult groups all text-search matches for a single file.
+type GroupedTextResult struct {
+	Path         string
+	Entry        fs.Entry
+	TotalMatches int
+	Matches      []Result // all matching lines, sorted by LineNum
+}
+
+// GroupTextResults groups text-search results by file path and returns them
+// sorted by the order in which files first appeared in results.
+func GroupTextResults(results []Result) []GroupedTextResult {
+	order := []string{}
+	byPath := map[string]*GroupedTextResult{}
+
+	for _, r := range results {
+		if _, ok := byPath[r.Path]; !ok {
+			info, err := os.Stat(r.Path)
+			entryType := fs.EntryFile
+			var size int64
+			if err == nil {
+				if info.IsDir() {
+					entryType = fs.EntryDir
+				}
+				size = info.Size()
+			}
+			g := &GroupedTextResult{
+				Path: r.Path,
+				Entry: fs.Entry{
+					Name: filepath.Base(r.Path),
+					Path: r.Path,
+					Type: entryType,
+					Size: size,
+				},
+			}
+			byPath[r.Path] = g
+			order = append(order, r.Path)
+		}
+		g := byPath[r.Path]
+		g.Matches = append(g.Matches, r)
+		g.TotalMatches++
+	}
+
+	out := make([]GroupedTextResult, 0, len(order))
+	for _, p := range order {
+		out = append(out, *byPath[p])
+	}
+	return out
 }
 
 func itoa(n int) string {
