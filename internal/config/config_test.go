@@ -41,7 +41,15 @@ func TestDefault_FieldValues(t *testing.T) {
 		{"Details", cfg.Keybinds.Details, "i"},
 		{"ToggleHidden", cfg.Keybinds.ToggleHidden, "."},
 		{"Search", cfg.Keybinds.Search, "/"},
-		{"DefaultListMode", cfg.Display.DefaultListMode, "dirs"},
+		{"SwitchTabs", cfg.Keybinds.SwitchTabs, "\t"},
+		{"SwitchTabsGlobal", cfg.Keybinds.SwitchTabsGlobal, "g"},
+		{"Ignore", cfg.Keybinds.Ignore, "I"},
+		{"FullSearch", cfg.Keybinds.FullSearch, "ctrl+f"},
+		{"CDDir", cfg.Keybinds.CDDir, "c"},
+		{"OpenExplorer", cfg.Keybinds.OpenExplorer, "E"},
+		{"Bookmark", cfg.Keybinds.Bookmark, "b"},
+		{"ShowHints", cfg.Keybinds.ShowHints, "?"},
+		{"DefaultListMode", cfg.Display.DefaultListMode, "dirs_and_files"},
 	}
 	for _, c := range keybindChecks {
 		if c.got != c.want {
@@ -76,28 +84,33 @@ func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	for _, expected := range []string{
-		`[keybinds]`,
-		`[display]`,
-		`[apps]`,
-		`toggle_list   = "f"`,
-		`yank          = "y"`,
-		`cut           = "x"`,
-		`paste         = "p"`,
-		`copy_path     = "Y"`,
-		`page_up       = "pgup"`,
-		`page_down     = "pgdown"`,
-		`jump_top      = "home"`,
-		`jump_bottom   = "end"`,
-		`search_max_results = 20`,
-		`parent_depth = 1`,
-	} {
-		if !strings.Contains(string(content), expected) {
-			t.Errorf("written config missing expected content: %s", expected)
+	// Check section headers are present.
+	for _, key := range []string{"[keybinds]", "[display]", "[apps]"} {
+		if !strings.Contains(string(content), key) {
+			t.Errorf("expected %q in default config output", key)
 		}
 	}
 
-	// Must NOT contain the removed vim_mode section
+	// Check every keybind entry is present as an actual key assignment.
+	for _, e := range keybindEntries {
+		if !fileContainsKey(string(content), e.key) {
+			t.Errorf("expected keybind %q in default config output", e.key)
+		}
+	}
+
+	// Check display and app keys.
+	for _, key := range displayEntries {
+		if !fileContainsKey(string(content), key) {
+			t.Errorf("expected display key %q in default config output", key)
+		}
+	}
+	for _, key := range appEntries {
+		if !fileContainsKey(string(content), key) {
+			t.Errorf("expected app key %q in default config output", key)
+		}
+	}
+
+	// Must NOT contain the removed vim_mode section.
 	if strings.Contains(string(content), "[vim_mode]") {
 		t.Error("written config must not contain deprecated [vim_mode] section")
 	}
@@ -116,7 +129,7 @@ func TestWriteDefault_ParsesCleanly(t *testing.T) {
 		t.Fatalf("written config does not parse cleanly: %v", err)
 	}
 
-	// Round-trip: parsed values should match the programmatic defaults
+	// Round-trip: parsed values should match the programmatic defaults.
 	defaults := Default()
 	if cfg.Keybinds.Up != defaults.Keybinds.Up {
 		t.Errorf("round-trip Up: got %q, want %q", cfg.Keybinds.Up, defaults.Keybinds.Up)
@@ -135,32 +148,6 @@ func TestLoad_ClampMinimums(t *testing.T) {
 	path := filepath.Join(dir, "listicles.toml")
 
 	badContent := `
-[keybinds]
-up = "up"
-down = "down"
-left = "left"
-right = "right"
-confirm = "enter"
-parent = "0"
-page_up = "pgup"
-page_down = "pgdown"
-jump_top = "home"
-jump_bottom = "end"
-options = "o"
-add = "a"
-delete = "d"
-toggle_list = "f"
-rename = "r"
-edit = "e"
-yank = "y"
-cut = "x"
-paste = "p"
-copy_path = "Y"
-quit = "q"
-details = "i"
-toggle_hidden = "."
-search = "/"
-
 [display]
 search_max_results = 0
 parent_depth = -5
@@ -174,7 +161,7 @@ parent_depth = -5
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Apply the same clamping Load() does
+	// Apply the same clamping Load() does.
 	if cfg.Display.SearchMaxResults < 1 {
 		cfg.Display.SearchMaxResults = 1
 	}
@@ -194,7 +181,7 @@ func TestLoad_UnknownFieldsIgnored(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "listicles.toml")
 
-	// Stale config with old vim_mode fields — BurntSushi/toml ignores unknown fields
+	// Stale config with old vim_mode fields — BurntSushi/toml ignores unknown fields.
 	stale := `
 [keybinds]
 up = "k"
@@ -235,14 +222,133 @@ parent_depth = 1
 	}
 
 	cfg := Default()
-	// Should not error — unknown fields are silently ignored
+	// Should not error — unknown fields are silently ignored.
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		t.Fatalf("unexpected error parsing stale config: %v", err)
 	}
 
-	// Custom keybind should have been applied
+	// Custom keybind should have been applied.
 	if cfg.Keybinds.Up != "k" {
 		t.Errorf("Up key not loaded from file: got %q, want %q", cfg.Keybinds.Up, "k")
+	}
+}
+
+func TestApplyKeybindDefaults_FillsMissing(t *testing.T) {
+	// A config with all keybind fields zeroed should get every default filled in.
+	cfg := &Config{}
+	applyKeybindDefaults(cfg)
+	d := Default().Keybinds
+
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"Up", cfg.Keybinds.Up, d.Up},
+		{"Down", cfg.Keybinds.Down, d.Down},
+		{"Left", cfg.Keybinds.Left, d.Left},
+		{"Right", cfg.Keybinds.Right, d.Right},
+		{"Quit", cfg.Keybinds.Quit, d.Quit},
+		{"Search", cfg.Keybinds.Search, d.Search},
+		{"FullSearch", cfg.Keybinds.FullSearch, d.FullSearch},
+		{"SwitchTabs", cfg.Keybinds.SwitchTabs, d.SwitchTabs},
+		{"Bookmark", cfg.Keybinds.Bookmark, d.Bookmark},
+		{"ShowHints", cfg.Keybinds.ShowHints, d.ShowHints},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("applyKeybindDefaults %s: got %q, want %q", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestApplyKeybindDefaults_PreservesUserValues(t *testing.T) {
+	// User-set values must not be overwritten.
+	cfg := &Config{}
+	cfg.Keybinds.Up = "k"
+	cfg.Keybinds.Down = "j"
+	applyKeybindDefaults(cfg)
+
+	if cfg.Keybinds.Up != "k" {
+		t.Errorf("Up should remain %q, got %q", "k", cfg.Keybinds.Up)
+	}
+	if cfg.Keybinds.Down != "j" {
+		t.Errorf("Down should remain %q, got %q", "j", cfg.Keybinds.Down)
+	}
+	// Unset field should have been filled with default.
+	if cfg.Keybinds.Quit != Default().Keybinds.Quit {
+		t.Errorf("Quit should be default %q, got %q", Default().Keybinds.Quit, cfg.Keybinds.Quit)
+	}
+}
+
+func TestFileContainsKey(t *testing.T) {
+	content := `[keybinds]
+up    = "up"
+toggle_hidden = "."
+# this comment mentions up but should not count as a key
+`
+	if !fileContainsKey(content, "up") {
+		t.Error("expected to find 'up' key")
+	}
+	if !fileContainsKey(content, "toggle_hidden") {
+		t.Error("expected to find 'toggle_hidden' key")
+	}
+	if fileContainsKey(content, "down") {
+		t.Error("should not find 'down' key")
+	}
+	// 'up' appears in a comment — must not match as a key.
+	commentOnly := "# up = \"up\"\n"
+	if fileContainsKey(commentOnly, "up") {
+		t.Error("should not match 'up' inside a comment")
+	}
+}
+
+func TestNeedsMigration_DetectsMissingKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "listicles.toml")
+
+	// Write a config missing the 'bookmark' key.
+	partial := "[keybinds]\nup = \"up\"\ndown = \"down\"\n"
+	if err := os.WriteFile(path, []byte(partial), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !needsMigration(path) {
+		t.Error("expected needsMigration to return true for incomplete config")
+	}
+}
+
+func TestNeedsMigration_FullConfigNoMigration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "listicles.toml")
+
+	if err := WriteDefault(path); err != nil {
+		t.Fatalf("WriteDefault: %v", err)
+	}
+
+	if needsMigration(path) {
+		t.Error("expected needsMigration to return false for a complete default config")
+	}
+}
+
+func TestKeybindEntries_CoversAllStructFields(t *testing.T) {
+	// Every key in keybindEntries must appear in keybindValues output.
+	d := Default()
+	vals := keybindValues(&d.Keybinds)
+	for _, e := range keybindEntries {
+		if _, ok := vals[e.key]; !ok {
+			t.Errorf("keybindEntries has %q but keybindValues map is missing it", e.key)
+		}
+	}
+	// Every key in keybindValues must appear in keybindEntries.
+	entryKeys := make(map[string]bool, len(keybindEntries))
+	for _, e := range keybindEntries {
+		entryKeys[e.key] = true
+	}
+	for k := range vals {
+		if !entryKeys[k] {
+			t.Errorf("keybindValues has %q but keybindEntries is missing it", k)
+		}
 	}
 }
 
