@@ -354,15 +354,15 @@ func TestKeybindEntries_CoversAllStructFields(t *testing.T) {
 
 func TestConfigPath_EndsCorrectly(t *testing.T) {
 	p := ConfigPath()
-	want := filepath.Join("listicles", "listicles.toml")
+	want := filepath.Join("delbysoft", "listicles.toml")
 	if !strings.HasSuffix(p, want) {
 		t.Errorf("ConfigPath %q does not end with %q", p, want)
 	}
 }
 
-func TestConfigDir_EndsWithListicles(t *testing.T) {
+func TestConfigDir_EndsWithDelbysoft(t *testing.T) {
 	d := ConfigDir()
-	if !strings.HasSuffix(d, "listicles") {
-		t.Errorf("ConfigDir %q does not end with 'listicles'", d)
+	if !strings.HasSuffix(d, "delbysoft") {
+		t.Errorf("ConfigDir %q does not end with 'delbysoft'", d)
 	}
 }

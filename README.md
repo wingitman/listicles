@@ -75,7 +75,7 @@ notepad $PROFILE
 
 ```bash
 make uninstall          # removes the binary
-rm ~/.config/listicles  # removes config (optional)
+rm -rf ~/.config/delbysoft  # removes config (optional)
 ```
 
 Also open your shell rc file and remove the two lines added by `make install`:
@@ -144,9 +144,9 @@ The config file is created automatically on first launch. Press `o` inside listi
 
 | OS | Path |
 |---|---|
-| Windows | `%APPDATA%\listicles\listicles.toml` (e.g. `C:\Users\you\AppData\Roaming\listicles\listicles.toml`) |
-| macOS | `~/Library/Application Support/listicles/listicles.toml` |
-| Linux | `~/.config/listicles/listicles.toml` |
+| Windows | `%APPDATA%\delbysoft\listicles.toml` (e.g. `C:\Users\you\AppData\Roaming\delbysoft\listicles.toml`) |
+| macOS | `~/Library/Application Support/delbysoft/listicles.toml` |
+| Linux | `~/.config/delbysoft/listicles.toml` |
 
 ### Default config
 

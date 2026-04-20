@@ -139,7 +139,7 @@ if ($profileContent -and $profileContent -match [regex]::Escape($marker)) {
 # ---------------------------------------------------------------------------
 # 6. Done
 # ---------------------------------------------------------------------------
-$ConfigDir  = Join-Path ([System.Environment]::GetFolderPath('ApplicationData')) 'listicles'
+$ConfigDir  = Join-Path ([System.Environment]::GetFolderPath('ApplicationData')) 'delbysoft'
 $ConfigFile = Join-Path $ConfigDir 'listicles.toml'
 
 Write-Host ''
