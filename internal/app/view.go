@@ -607,6 +607,16 @@ func (m Model) renderDetail(e fs.Entry) string {
 		return fs.HumanSize(e.Size)
 	case DetailFullPath:
 		return e.Path
+	case DetailModTime:
+		return fs.FileModTime(e.Path)
+	case DetailBirthTime:
+		return fs.FileBirthTime(e.Path)
+	case DetailPermissions:
+		return fs.FilePermissions(e.Path)
+	case DetailOwner:
+		return fs.FileOwner(e.Path)
+	case DetailMimeType:
+		return fs.FileMimeType(e.Path, e.IsDir())
 	}
 	return ""
 }
@@ -719,7 +729,7 @@ func (m Model) renderStatusBar() string {
 
 	// ── Normal mode ───────────────────────────────────────────────────────────
 
-	detailLabel := []string{"none", "count", "size", "path"}[m.detailLevel]
+	detailLabel := []string{"none", "count", "size", "path", "modified", "created", "perms", "owner", "type"}[m.detailLevel]
 	listLabel := "dirs"
 	if m.listMode == ListDirsAndFiles {
 		listLabel = "all"

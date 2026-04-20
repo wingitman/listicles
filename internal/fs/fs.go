@@ -4,10 +4,15 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"mime"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 )
 
 // EntryType distinguishes files from directories.
@@ -51,6 +56,194 @@ func HumanSize(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// FileModTime returns the modification time of path as a formatted string.
+func FileModTime(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "N/A"
+	}
+	return info.ModTime().Format("Jan 02 2006 15:04")
+}
+
+// FileBirthTime returns the creation/birth time of path as a formatted string.
+// The implementation is platform-specific (see birthtime_*.go files).
+// On Linux, birth time is not reliably available so "N/A (see modified)" is returned.
+
+// FilePermissions returns a human-readable permission string for path,
+// e.g. "rwxr-xr-- (754)". Returns "N/A" on Windows or on error.
+func FilePermissions(path string) string {
+	if runtime.GOOS == "windows" {
+		return "N/A"
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "N/A"
+	}
+	perm := info.Mode().Perm()
+	sym := permSymbolic(perm)
+	oct := fmt.Sprintf("%o", perm)
+	return fmt.Sprintf("%s (%s)", sym, oct)
+}
+
+// permSymbolic converts a 9-bit os.FileMode into a symbolic rwx string like "rwxr-xr--".
+func permSymbolic(mode os.FileMode) string {
+	const rwx = "rwxrwxrwx"
+	buf := []byte("---------")
+	for i := 0; i < 9; i++ {
+		if mode&(1<<uint(8-i)) != 0 {
+			buf[i] = rwx[i]
+		}
+	}
+	return string(buf)
+}
+
+// FileOwner returns "user:group" for path on Unix systems.
+// On Windows or on error, "N/A" is returned.
+func FileOwner(path string) string {
+	if runtime.GOOS == "windows" {
+		return "N/A"
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "N/A"
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "N/A"
+	}
+	uid := strconv.Itoa(int(st.Uid))
+	gid := strconv.Itoa(int(st.Gid))
+
+	userName := uid
+	if u, err := user.LookupId(uid); err == nil {
+		userName = u.Username
+	}
+	groupName := gid
+	if g, err := user.LookupGroupId(gid); err == nil {
+		groupName = g.Name
+	}
+	return userName + ":" + groupName
+}
+
+// FileMimeType returns a short, friendly description of the file type based on
+// its extension (e.g. "Go source", "PNG image", "JSON data").
+// Directories always return "Directory".
+func FileMimeType(path string, isDir bool) string {
+	if isDir {
+		return "Directory"
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		return "Unknown"
+	}
+	// Check friendly name overrides first.
+	if label, ok := friendlyMimeLabels[ext]; ok {
+		return label
+	}
+	// Fall back to stdlib mime package.
+	mtype := mime.TypeByExtension(ext)
+	if mtype == "" {
+		return "Unknown"
+	}
+	// Strip parameters (e.g. "; charset=utf-8").
+	if i := strings.Index(mtype, ";"); i != -1 {
+		mtype = strings.TrimSpace(mtype[:i])
+	}
+	return mtype
+}
+
+// friendlyMimeLabels maps common file extensions to short human-readable labels.
+var friendlyMimeLabels = map[string]string{
+	// Source code
+	".go":    "Go source",
+	".py":    "Python source",
+	".js":    "JavaScript",
+	".ts":    "TypeScript",
+	".jsx":   "JSX",
+	".tsx":   "TSX",
+	".rs":    "Rust source",
+	".c":     "C source",
+	".cpp":   "C++ source",
+	".cc":    "C++ source",
+	".h":     "C/C++ header",
+	".hpp":   "C++ header",
+	".java":  "Java source",
+	".kt":    "Kotlin source",
+	".swift": "Swift source",
+	".rb":    "Ruby source",
+	".php":   "PHP source",
+	".cs":    "C# source",
+	".lua":   "Lua source",
+	".sh":    "Shell script",
+	".bash":  "Bash script",
+	".zsh":   "Zsh script",
+	".fish":  "Fish script",
+	".pl":    "Perl script",
+	".r":     "R source",
+	// Data / config
+	".json":  "JSON data",
+	".yaml":  "YAML data",
+	".yml":   "YAML data",
+	".toml":  "TOML config",
+	".xml":   "XML data",
+	".csv":   "CSV data",
+	".sql":   "SQL script",
+	".env":   "Env config",
+	".ini":   "INI config",
+	".conf":  "Config file",
+	".lock":  "Lock file",
+	// Documents
+	".md":   "Markdown",
+	".txt":  "Plain text",
+	".rst":  "reStructuredText",
+	".pdf":  "PDF document",
+	".doc":  "Word document",
+	".docx": "Word document",
+	".xls":  "Excel spreadsheet",
+	".xlsx": "Excel spreadsheet",
+	// Images
+	".png":  "PNG image",
+	".jpg":  "JPEG image",
+	".jpeg": "JPEG image",
+	".gif":  "GIF image",
+	".svg":  "SVG image",
+	".webp": "WebP image",
+	".ico":  "Icon image",
+	".bmp":  "BMP image",
+	// Archives
+	".zip":  "ZIP archive",
+	".tar":  "TAR archive",
+	".gz":   "Gzip archive",
+	".bz2":  "Bzip2 archive",
+	".xz":   "XZ archive",
+	".7z":   "7-Zip archive",
+	".rar":  "RAR archive",
+	// Media
+	".mp3":  "MP3 audio",
+	".wav":  "WAV audio",
+	".flac": "FLAC audio",
+	".ogg":  "OGG audio",
+	".mp4":  "MP4 video",
+	".mkv":  "MKV video",
+	".mov":  "MOV video",
+	".avi":  "AVI video",
+	// Web
+	".html": "HTML file",
+	".htm":  "HTML file",
+	".css":  "CSS stylesheet",
+	// Executables / binaries
+	".exe": "Windows executable",
+	".so":  "Shared library",
+	".a":   "Static library",
+	".dylib": "Dynamic library",
+	// Other
+	".log":  "Log file",
+	".tmp":  "Temp file",
+	".bak":  "Backup file",
+	".pem":  "PEM certificate",
+	".key":  "Key file",
 }
 
 // ScanDir lists entries in dirPath according to showHidden and showFiles flags.

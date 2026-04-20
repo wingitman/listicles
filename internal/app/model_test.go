@@ -732,17 +732,20 @@ func TestUpdate_ToggleHidden(t *testing.T) {
 
 func TestUpdate_DetailsToggle(t *testing.T) {
 	m, _ := newModelWithDirs(t, "a")
-	levels := []DetailLevel{DetailNone, DetailCount, DetailSize, DetailFullPath, DetailNone}
+	levels := []DetailLevel{
+		DetailNone, DetailCount, DetailSize, DetailFullPath,
+		DetailModTime, DetailBirthTime, DetailPermissions, DetailOwner, DetailMimeType,
+	}
 
-	for i, expected := range levels[:4] {
+	for i, expected := range levels {
 		if m.detailLevel != expected {
 			t.Errorf("step %d: detailLevel = %v, want %v", i, m.detailLevel, expected)
 		}
 		m = sendKey(m, "i")
 	}
-	// After 4 presses, should wrap back to None
+	// After 9 presses, should wrap back to None
 	if m.detailLevel != DetailNone {
-		t.Errorf("after 4 presses: detailLevel = %v, want DetailNone", m.detailLevel)
+		t.Errorf("after 9 presses: detailLevel = %v, want DetailNone", m.detailLevel)
 	}
 }
 

@@ -49,6 +49,11 @@ const (
 	DetailCount
 	DetailSize
 	DetailFullPath
+	DetailModTime
+	DetailBirthTime
+	DetailPermissions
+	DetailOwner
+	DetailMimeType
 )
 
 type ListMode int
@@ -1108,7 +1113,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Toggle detail level
 		if matchKey(key, m.keys.details) {
-			m.detailLevel = (m.detailLevel + 1) % 4
+			m.detailLevel = (m.detailLevel + 1) % 9
 			return m, nil
 		}
 
