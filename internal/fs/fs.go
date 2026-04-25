@@ -377,7 +377,13 @@ func ParentDir(path string) string {
 // CopyEntry recursively copies src into dstDir, creating dstDir/basename(src).
 // Works for both files and directories.
 func CopyEntry(src, dstDir string) error {
-	dst := filepath.Join(dstDir, filepath.Base(src))
+	return CopyEntryAs(src, dstDir, filepath.Base(src))
+}
+
+// CopyEntryAs recursively copies src into dstDir with the given newName,
+// creating dstDir/newName. Works for both files and directories.
+func CopyEntryAs(src, dstDir, newName string) error {
+	dst := filepath.Join(dstDir, newName)
 	info, err := os.Stat(src)
 	if err != nil {
 		return err

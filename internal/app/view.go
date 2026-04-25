@@ -650,6 +650,10 @@ func (m Model) renderOverlay() string {
 			label = "Add (end name with / to create a directory):"
 		case InputRename:
 			label = fmt.Sprintf("Rename %q:", filepath.Base(m.pendingPath))
+		case InputPasteCopy:
+			label = fmt.Sprintf("Copy %q as:", filepath.Base(m.pendingPath))
+		case InputPasteMove:
+			label = fmt.Sprintf("Move %q as:", filepath.Base(m.pendingPath))
 		}
 		box := ui.StyleConfirmBox.Render(
 			ui.StyleInputPrompt.Render(label) + "\n\n" +

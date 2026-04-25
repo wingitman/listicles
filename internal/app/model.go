@@ -38,8 +38,10 @@ const (
 type InputAction int
 
 const (
-	InputAdd    InputAction = iota
-	InputRename InputAction = iota
+	InputAdd       InputAction = iota
+	InputRename    InputAction = iota
+	InputPasteCopy InputAction = iota
+	InputPasteMove InputAction = iota
 )
 
 type DetailLevel int
@@ -1197,14 +1199,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingDestDir = destDir
 			m.pendingPath = m.clipboardPath
 			if m.clipboardOp == ClipCut {
-				m.confirmAction = ConfirmPasteMove
-				m.confirmMsg = fmt.Sprintf("Move %q\n  → %q?", filepath.Base(m.clipboardPath), destDir)
+				m.inputAction = InputPasteMove
 			} else {
-				m.confirmAction = ConfirmPasteCopy
-				m.confirmMsg = fmt.Sprintf("Copy %q\n  → %q?", filepath.Base(m.clipboardPath), destDir)
+				m.inputAction = InputPasteCopy
 			}
-			m.mode = ModeConfirm
-			return m, nil
+			m.textInput.Reset()
+			m.textInput.SetValue(filepath.Base(m.clipboardPath))
+			m.textInput.Focus()
+			m.mode = ModeInput
+			return m, textinput.Blink
 		}
 
 		// Copy path to clipboard
@@ -1385,6 +1388,24 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 		m.pendingName = val
 		m.confirmMsg = fmt.Sprintf("Rename %q → %q?", filepath.Base(m.pendingPath), val)
 		m.mode = ModeConfirm
+
+	case InputPasteCopy:
+		if val == "" {
+			return m, nil
+		}
+		m.pendingName = val
+		m.confirmAction = ConfirmPasteCopy
+		m.confirmMsg = fmt.Sprintf("Copy %q\n  → %q?", filepath.Base(m.pendingPath), filepath.Join(m.pendingDestDir, val))
+		m.mode = ModeConfirm
+
+	case InputPasteMove:
+		if val == "" {
+			return m, nil
+		}
+		m.pendingName = val
+		m.confirmAction = ConfirmPasteMove
+		m.confirmMsg = fmt.Sprintf("Move %q\n  → %q?", filepath.Base(m.pendingPath), filepath.Join(m.pendingDestDir, val))
+		m.mode = ModeConfirm
 	}
 
 	return m, nil
@@ -1431,7 +1452,7 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 		}
 
 	case ConfirmPasteCopy:
-		if err := fs.CopyEntry(m.pendingPath, m.pendingDestDir); err != nil {
+		if err := fs.CopyEntryAs(m.pendingPath, m.pendingDestDir, m.pendingName); err != nil {
 			m.errorMsg = fmt.Sprintf("Error copying: %v", err)
 			m.mode = ModeError
 			return m, nil
@@ -1443,11 +1464,20 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 		} else {
 			_ = m.rebuildTree()
 		}
-		m.statusMsg = fmt.Sprintf("Copied %q", filepath.Base(m.pendingPath))
+		m.statusMsg = fmt.Sprintf("Copied %q", m.pendingName)
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearStatusMsg{} })
 
 	case ConfirmPasteMove:
-		if err := fs.CopyEntry(m.pendingPath, m.pendingDestDir); err != nil {
+		destPath := filepath.Join(m.pendingDestDir, m.pendingName)
+		// If source and destination are the same path, treat as a no-op move:
+		// just clear the clipboard so the file is not deleted.
+		if destPath == m.pendingPath {
+			m.clipboardPath = ""
+			m.clipboardOp = ClipNone
+			m.statusMsg = fmt.Sprintf("Moved %q", m.pendingName)
+			return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearStatusMsg{} })
+		}
+		if err := fs.CopyEntryAs(m.pendingPath, m.pendingDestDir, m.pendingName); err != nil {
 			m.errorMsg = fmt.Sprintf("Error moving: %v", err)
 			m.mode = ModeError
 			return m, nil
@@ -1461,7 +1491,7 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 		m.clipboardPath = ""
 		m.clipboardOp = ClipNone
 		_ = m.rebuildTree()
-		m.statusMsg = fmt.Sprintf("Moved %q", filepath.Base(m.pendingPath))
+		m.statusMsg = fmt.Sprintf("Moved %q", m.pendingName)
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearStatusMsg{} })
 	}
 
