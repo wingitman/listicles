@@ -575,6 +575,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case errorMsg:
 		m.errorMsg = string(msg)
 		m.mode = ModeError
@@ -1244,6 +1247,98 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	return m, nil
+}
+
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.mode == ModeInput || m.mode == ModeConfirm || m.mode == ModeError {
+		return m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		return m.mouseMove(-1)
+	case tea.MouseButtonWheelDown:
+		return m.mouseMove(1)
+	case tea.MouseButtonLeft:
+		if msg.Action != tea.MouseActionPress {
+			return m, nil
+		}
+		return m.mouseClickRow(msg.Y)
+	}
+	return m, nil
+}
+
+func (m Model) mouseMove(delta int) (tea.Model, tea.Cmd) {
+	switch m.mode {
+	case ModeSearch:
+		if m.searchInputActive {
+			return m, nil
+		}
+		m.cursor += delta
+		m.clampSearchCursor()
+		m.adjustOffset()
+	case ModeRecents, ModeBookmarks:
+		m.cursor += delta
+		m.clampCursorSkipHeaders()
+		m.adjustOffset()
+	case ModeNormal:
+		m.cursor += delta
+		m.clampCursor()
+		m.adjustOffset()
+	}
+	return m, nil
+}
+
+func (m Model) mouseClickRow(y int) (tea.Model, tea.Cmd) {
+	if m.mode == ModeSearch && m.searchInputActive {
+		return m, nil
+	}
+	idx := m.offset + y - m.mouseListStartRow()
+	if idx < 0 || idx >= len(m.mouseNodes()) {
+		return m, nil
+	}
+	if (m.mode == ModeRecents || m.mode == ModeBookmarks) && m.nodes[idx].IsGroupHeader {
+		return m, nil
+	}
+	if idx == m.cursor {
+		return m.activateMouseSelection()
+	}
+	m.cursor = idx
+	m.adjustOffset()
+	return m, nil
+}
+
+func (m Model) mouseNodes() []TreeNode {
+	if m.mode == ModeSearch && m.searchLiveNodes != nil {
+		return m.searchLiveNodes
+	}
+	return m.nodes
+}
+
+func (m Model) mouseListStartRow() int {
+	row := 2 // header line + rule
+	switch m.mode {
+	case ModeSearch:
+		if m.cfg.Display.ParentDepth > 0 {
+			row += strings.Count(m.renderParentCrumbs(), "\n")
+		}
+		row += 2 // search input + search hint
+	case ModeRecents, ModeBookmarks:
+		row += 2 // tab title + tab hint
+	default:
+		row += strings.Count(m.renderParentCrumbs(), "\n")
+	}
+	return row
+}
+
+func (m Model) activateMouseSelection() (tea.Model, tea.Cmd) {
+	switch m.mode {
+	case ModeSearch:
+		return m.confirmSearchSelection()
+	case ModeRecents, ModeBookmarks, ModeNormal:
+		return m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	}
 	return m, nil
 }
 
