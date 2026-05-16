@@ -18,6 +18,8 @@ import (
 	"github.com/wingitman/listicles/internal/fs"
 	"github.com/wingitman/listicles/internal/search"
 	"github.com/wingitman/listicles/internal/state"
+	appupdate "github.com/wingitman/listicles/internal/update"
+	"github.com/wingitman/listicles/internal/version"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -33,6 +35,8 @@ const (
 	ModeSearchResult      // kept for backward compat; no longer entered
 	ModeRecents           // recents list
 	ModeBookmarks         // bookmarks list
+	ModeUpdatePrompt      // startup update prompt
+	ModeUpdates           // update history/install screen
 )
 
 type InputAction int
@@ -68,10 +72,11 @@ const (
 type ConfirmAction int
 
 const (
-	ConfirmDelete    ConfirmAction = iota
-	ConfirmRename    ConfirmAction = iota
-	ConfirmPasteCopy ConfirmAction = iota
-	ConfirmPasteMove ConfirmAction = iota
+	ConfirmDelete          ConfirmAction = iota
+	ConfirmRename          ConfirmAction = iota
+	ConfirmPasteCopy       ConfirmAction = iota
+	ConfirmPasteMove       ConfirmAction = iota
+	ConfirmInstallSelected ConfirmAction = iota
 )
 
 // HintsMode controls which contextual hint page is shown in the status bar.
@@ -178,6 +183,12 @@ type Model struct {
 	appState   *state.State
 	stateScope bool // false = project-scoped, true = global
 
+	// Update state
+	updateInfo     appupdate.Info
+	updateChecking bool
+	updateCursor   int
+	updateExpanded map[string]bool
+
 	keys resolvedKeys
 }
 
@@ -216,6 +227,7 @@ type resolvedKeys struct {
 	openExplorer     string
 	bookmark         string
 	showHints        string
+	showUpdates      string
 }
 
 func resolveKeys(k config.Keybinds) resolvedKeys {
@@ -252,6 +264,7 @@ func resolveKeys(k config.Keybinds) resolvedKeys {
 		openExplorer:     k.OpenExplorer,
 		bookmark:         k.Bookmark,
 		showHints:        k.ShowHints,
+		showUpdates:      k.ShowUpdates,
 	}
 }
 
@@ -290,6 +303,7 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 		gitRoot:           gitRoot,
 		gitignorePatterns: gitignorePatterns,
 		appState:          appState,
+		updateExpanded:    map[string]bool{},
 	}
 
 	if err := m.initTree(startDir); err != nil {
@@ -449,7 +463,12 @@ func (m *Model) rebuildTree() error {
 
 // ─── Standard helpers ─────────────────────────────────────────────────────────
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd {
+	if m.cfg == nil || m.cfg.Updates.DisableChecks {
+		return nil
+	}
+	return checkUpdatesCmd(m.cfg)
+}
 
 func (m *Model) selectedEntry() *fs.Entry {
 	if len(m.nodes) == 0 || m.cursor >= len(m.nodes) {
@@ -606,6 +625,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return clearStatusMsg{}
 		})
 
+	case updateCheckMsg:
+		m.updateChecking = false
+		m.updateInfo = msg.info
+		if msg.info.CheckError != "" {
+			return m, nil
+		}
+		if len(msg.info.Available) > 0 {
+			m.updateCursor = 0
+			m.mode = ModeUpdatePrompt
+		}
+		return m, nil
+
+	case updateLaunchMsg:
+		if msg.err != "" {
+			m.errorMsg = msg.err
+			m.mode = ModeError
+			return m, nil
+		}
+		return m, tea.Quit
+
 	case searchResultMsg:
 		m.searchRunning = false
 		m.searchResults = msg.results
@@ -676,6 +715,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// ── Startup update prompt ─────────────────────────────────────────
+		if m.mode == ModeUpdatePrompt {
+			switch key {
+			case "y", "Y":
+				return m, m.launchUpdate(true, "")
+			case "enter":
+				m.toggleSelectedUpdateDetails()
+				return m, nil
+			case "esc", "n", "N":
+				m.mode = ModeNormal
+				return m, nil
+			}
+			if matchKey(key, m.keys.up) {
+				m.updateCursor--
+				m.clampUpdateCursor()
+				return m, nil
+			}
+			if matchKey(key, m.keys.down) {
+				m.updateCursor++
+				m.clampUpdateCursor()
+				return m, nil
+			}
+			if matchKey(key, m.keys.right) || matchKey(key, m.keys.left) {
+				m.toggleSelectedUpdateDetails()
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// ── Confirm (y/n) ─────────────────────────────────────────────────
 		if m.mode == ModeConfirm {
 			switch key {
@@ -713,6 +781,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.hintsMode = HintsActions
 			default:
 				m.hintsMode = HintsFull
+			}
+			return m, nil
+		}
+
+		// ── Updates mode ─────────────────────────────────────────────────
+		if m.mode == ModeUpdates {
+			switch {
+			case key == "esc" || matchKey(key, m.keys.quit):
+				m.mode = ModeNormal
+				return m, nil
+			case matchKey(key, m.keys.up):
+				m.updateCursor--
+				m.clampUpdateCursor()
+				return m, nil
+			case matchKey(key, m.keys.down):
+				m.updateCursor++
+				m.clampUpdateCursor()
+				return m, nil
+			case matchKey(key, m.keys.confirm) || matchKey(key, m.keys.right) || matchKey(key, m.keys.left):
+				m.toggleSelectedUpdateDetails()
+				return m, nil
+			case matchKey(key, m.keys.fullSearch):
+				m.updateChecking = true
+				return m, checkUpdatesCmd(m.cfg)
+			case matchKey(key, m.keys.details):
+				if c := m.selectedUpdateCommit(); c != nil {
+					return m, m.launchUpdate(false, c.Hash)
+				}
+				return m, nil
+			case key == "y" || key == "Y":
+				return m, m.launchUpdate(true, "")
 			}
 			return m, nil
 		}
@@ -943,6 +1042,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Switch tabs: Normal → Recents
 		if matchKey(key, m.keys.switchTabs) {
 			m.enterRecents()
+			return m, nil
+		}
+
+		// Updates / changelog.
+		if matchKey(key, m.keys.showUpdates) {
+			m.updateCursor = 0
+			m.mode = ModeUpdates
+			if m.updateInfo.RepoPath == "" && !m.updateChecking {
+				m.updateChecking = true
+				return m, checkUpdatesCmd(m.cfg)
+			}
 			return m, nil
 		}
 
@@ -1294,6 +1404,9 @@ func (m Model) mouseMove(delta int) (tea.Model, tea.Cmd) {
 		m.cursor += delta
 		m.clampCursorSkipHeaders()
 		m.adjustOffset()
+	case ModeUpdates:
+		m.updateCursor += delta
+		m.clampUpdateCursor()
 	case ModeNormal:
 		m.cursor += delta
 		m.clampCursor()
@@ -1307,6 +1420,19 @@ func (m Model) mouseClickRow(y int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	idx := m.offset + y - m.mouseListStartRow()
+	if m.mode == ModeUpdates {
+		idx = y - m.mouseListStartRow()
+		if idx < 0 || idx >= len(m.updateCommits()) {
+			return m, nil
+		}
+		if idx == m.updateCursor {
+			m.toggleSelectedUpdateDetails()
+			return m, nil
+		}
+		m.updateCursor = idx
+		m.clampUpdateCursor()
+		return m, nil
+	}
 	if idx < 0 || idx >= len(m.mouseNodes()) {
 		return m, nil
 	}
@@ -1338,6 +1464,8 @@ func (m Model) mouseListStartRow() int {
 		row += 2 // search input + search hint
 	case ModeRecents, ModeBookmarks:
 		row += 2 // tab title + tab hint
+	case ModeUpdates:
+		row += 7 // title + metadata + spacer + section label
 	default:
 		row += strings.Count(m.renderParentCrumbs(), "\n")
 	}
@@ -1348,6 +1476,9 @@ func (m Model) activateMouseSelection() (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case ModeSearch:
 		return m.confirmSearchSelection()
+	case ModeUpdates:
+		m.toggleSelectedUpdateDetails()
+		return m, nil
 	case ModeRecents, ModeBookmarks, ModeNormal:
 		return m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	}
@@ -1457,6 +1588,82 @@ func (m *Model) applyConfig(cfg *config.Config) error {
 	m.showHidden = cfg.Display.ShowHidden
 	m.listMode = listModeFromConfig(cfg)
 	return m.rebuildTree()
+}
+
+// ─── Updates helpers ─────────────────────────────────────────────────────────
+
+func checkUpdatesCmd(cfg *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		return updateCheckMsg{info: appupdate.Check(cfg, version.Commit, 20)}
+	}
+}
+
+func (m Model) launchUpdate(latest bool, targetCommit string) tea.Cmd {
+	if latest && targetCommit == "" {
+		targetCommit = m.updateInfo.LatestCommit
+	}
+	repoPath := m.updateInfo.RepoPath
+	if repoPath == "" && m.cfg != nil {
+		repoPath = m.cfg.Updates.RepoPath
+	}
+	recorder, _ := os.Executable()
+	terminal := ""
+	if m.cfg != nil {
+		terminal = m.cfg.Updates.Terminal
+	}
+	req := appupdate.InstallRequest{
+		RepoPath:       repoPath,
+		TargetCommit:   targetCommit,
+		Latest:         latest,
+		Terminal:       terminal,
+		RecorderBinary: recorder,
+	}
+	return func() tea.Msg {
+		if err := appupdate.LaunchDetached(req); err != nil {
+			return updateLaunchMsg{err: err.Error()}
+		}
+		return updateLaunchMsg{}
+	}
+}
+
+func (m *Model) updateCommits() []appupdate.Commit {
+	if len(m.updateInfo.Available) > 0 {
+		return m.updateInfo.Available
+	}
+	return m.updateInfo.History
+}
+
+func (m *Model) selectedUpdateCommit() *appupdate.Commit {
+	commits := m.updateCommits()
+	if len(commits) == 0 || m.updateCursor < 0 || m.updateCursor >= len(commits) {
+		return nil
+	}
+	return &commits[m.updateCursor]
+}
+
+func (m *Model) clampUpdateCursor() {
+	commits := m.updateCommits()
+	if len(commits) == 0 {
+		m.updateCursor = 0
+		return
+	}
+	if m.updateCursor < 0 {
+		m.updateCursor = 0
+	}
+	if m.updateCursor >= len(commits) {
+		m.updateCursor = len(commits) - 1
+	}
+}
+
+func (m *Model) toggleSelectedUpdateDetails() {
+	c := m.selectedUpdateCommit()
+	if c == nil {
+		return
+	}
+	if m.updateExpanded == nil {
+		m.updateExpanded = map[string]bool{}
+	}
+	m.updateExpanded[c.Hash] = !m.updateExpanded[c.Hash]
 }
 
 // ─── Input / confirm ─────────────────────────────────────────────────────────
@@ -2092,3 +2299,5 @@ type reloadConfigMsg struct{}
 type searchResultMsg struct{ results []search.Result }
 type digitTimeoutMsg struct{}
 type clearStatusMsg struct{}
+type updateCheckMsg struct{ info appupdate.Info }
+type updateLaunchMsg struct{ err string }

@@ -49,6 +49,7 @@ func TestDefault_FieldValues(t *testing.T) {
 		{"OpenExplorer", cfg.Keybinds.OpenExplorer, "E"},
 		{"Bookmark", cfg.Keybinds.Bookmark, "b"},
 		{"ShowHints", cfg.Keybinds.ShowHints, "?"},
+		{"ShowUpdates", cfg.Keybinds.ShowUpdates, "U"},
 		{"DefaultListMode", cfg.Display.DefaultListMode, "dirs_and_files"},
 	}
 	for _, c := range keybindChecks {
@@ -69,6 +70,9 @@ func TestDefault_FieldValues(t *testing.T) {
 	if cfg.Apps.Editor != "" || cfg.Apps.Opener != "" {
 		t.Error("Apps.Editor and Apps.Opener should be empty by default")
 	}
+	if cfg.Updates.DisableChecks || cfg.Updates.CurrentCommit != "" || cfg.Updates.RepoPath != "" || cfg.Updates.Terminal != "" {
+		t.Error("Updates should default to enabled checks with empty metadata")
+	}
 }
 
 func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
@@ -85,7 +89,7 @@ func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 	}
 
 	// Check section headers are present.
-	for _, key := range []string{"[keybinds]", "[display]", "[apps]"} {
+	for _, key := range []string{"[keybinds]", "[display]", "[apps]", "[updates]"} {
 		if !strings.Contains(string(content), key) {
 			t.Errorf("expected %q in default config output", key)
 		}
@@ -107,6 +111,11 @@ func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 	for _, key := range appEntries {
 		if !fileContainsKey(string(content), key) {
 			t.Errorf("expected app key %q in default config output", key)
+		}
+	}
+	for _, key := range updateEntries {
+		if !fileContainsKey(string(content), key) {
+			t.Errorf("expected update key %q in default config output", key)
 		}
 	}
 
@@ -254,6 +263,7 @@ func TestApplyKeybindDefaults_FillsMissing(t *testing.T) {
 		{"SwitchTabs", cfg.Keybinds.SwitchTabs, d.SwitchTabs},
 		{"Bookmark", cfg.Keybinds.Bookmark, d.Bookmark},
 		{"ShowHints", cfg.Keybinds.ShowHints, d.ShowHints},
+		{"ShowUpdates", cfg.Keybinds.ShowUpdates, d.ShowUpdates},
 	}
 	for _, c := range checks {
 		if c.got != c.want {

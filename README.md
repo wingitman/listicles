@@ -129,6 +129,7 @@ Multi-digit jump: type digits within 500ms. The number being typed shows in the 
 | `/` | Search (live filter as you type) |
 | `Enter` (in search) | Run full search via `fd`/`rg` |
 | `Esc` (in search) | Cancel |
+| `U` | Show updates, recent changes, and install history commits |
 | `o` | Open config in `$EDITOR` |
 | `q` / `Esc` | Quit |
 
@@ -182,6 +183,7 @@ quit          = "q"
 details       = "i"
 toggle_hidden = "."
 search        = "/"
+show_updates  = "U"
 
 [display]
 show_hidden        = false
@@ -192,7 +194,19 @@ parent_depth       = 1        # 0 = off, 1 = show immediate parent, 2+ = more an
 [apps]
 editor = ""   # leave empty to use $EDITOR env var
 opener = ""   # leave empty to use xdg-open (Linux) / open (macOS)
+
+[updates]
+disable_checks = false  # true disables startup update checks
+current_commit = ""     # installed app commit, maintained by listicles
+repo_path = ""          # source checkout used for updates
+terminal = ""           # optional terminal command for detached updates
 ```
+
+## Updates
+
+On launch, listicles checks the configured source checkout with `git fetch --prune --all`. If commits exist between the installed commit and the current branch's upstream, it prompts before updating.
+
+Updates run in a separate terminal and listicles exits before the installer starts. The update keeps your current branch/fork behavior: it uses your checkout's current branch and upstream, not a hardcoded release branch. Press `U` to review recent commits, expand commit descriptions, install the latest upstream commit, or install an older commit from history.
 
 ### Vim-style config
 

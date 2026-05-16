@@ -13,6 +13,10 @@
     .\install.ps1
 #>
 
+param(
+    [switch]$Update
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -55,7 +59,9 @@ Write-Step 'Building listicles...'
 if (-not (Test-Path $BuildDir)) {
     New-Item -ItemType Directory -Path $BuildDir | Out-Null
 }
-& go build -ldflags='-s -w' -o $BinaryBuild .
+$Commit = (git rev-parse HEAD 2>$null)
+if (-not $Commit) { $Commit = 'dev' }
+& go build -ldflags="-s -w -X github.com/wingitman/listicles/internal/version.Commit=$Commit" -o $BinaryBuild .
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'ERROR: go build failed.' -ForegroundColor Red
     exit 1

@@ -1,6 +1,7 @@
 BINARY     := listicles
 INSTALL_DIR := $(HOME)/.local/bin
 BUILD_DIR  := bin
+COMMIT     := $(shell git rev-parse HEAD 2>/dev/null || printf dev)
 
 .PHONY: all build install uninstall clean test test-integration test-all
 
@@ -8,7 +9,7 @@ all: build
 
 build:
 	@mkdir -p $(BUILD_DIR)
-	go build -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY) .
+	go build -ldflags="-s -w -X github.com/wingitman/listicles/internal/version.Commit=$(COMMIT)" -o $(BUILD_DIR)/$(BINARY) .
 	@echo "Built: $(BUILD_DIR)/$(BINARY)"
 
 install: build

@@ -31,6 +31,11 @@ func (m Model) View() string {
 	case ModeBookmarks:
 		b.WriteString(m.renderBookmarksHeader())
 		b.WriteString("\n")
+	case ModeUpdates:
+		b.WriteString(m.renderUpdatesScreen())
+		b.WriteString("\n")
+		b.WriteString(m.renderStatusBar())
+		return b.String()
 	case ModeSearch:
 		if m.cfg.Display.ParentDepth > 0 {
 			crumbs := m.renderParentCrumbs()
@@ -92,6 +97,9 @@ func (m Model) renderHeader() string {
 	}
 	if m.mode == ModeBookmarks {
 		badges = append(badges, ui.StyleInputPrompt.Render("[bookmarks]"))
+	}
+	if m.mode == ModeUpdates || m.mode == ModeUpdatePrompt {
+		badges = append(badges, ui.StyleInputPrompt.Render("[updates]"))
 	}
 	if m.digitBuffer != "" {
 		badges = append(badges, ui.StyleNumber.Render("→ "+m.digitBuffer))
@@ -661,8 +669,116 @@ func (m Model) renderOverlay() string {
 				ui.StyleMuted.Render("Enter to confirm · Esc to cancel"),
 		)
 		return box + "\n"
+
+	case ModeUpdatePrompt:
+		return m.renderUpdatePrompt() + "\n"
 	}
 	return ""
+}
+
+func (m Model) renderUpdatePrompt() string {
+	commits := m.updateInfo.Available
+	rows := len(commits)
+	if rows > 5 {
+		rows = 5
+	}
+	start := m.updateCursor - rows/2
+	if start < 0 {
+		start = 0
+	}
+	if start+rows > len(commits) {
+		start = len(commits) - rows
+		if start < 0 {
+			start = 0
+		}
+	}
+	var b strings.Builder
+	b.WriteString(ui.StyleSuccess.Render("Update available"))
+	b.WriteString("\n\n")
+	b.WriteString("Current: " + shortCommit(m.updateInfo.CurrentCommit) + "\n")
+	b.WriteString("Latest:  " + shortCommit(m.updateInfo.LatestCommit) + "\n")
+	if m.updateInfo.Branch != "" {
+		b.WriteString("Branch:  " + m.updateInfo.Branch + " -> " + m.updateInfo.Upstream + "\n")
+	}
+	b.WriteString("\nRecent changes:\n")
+	for i := start; i < start+rows && i < len(commits); i++ {
+		c := commits[i]
+		prefix := "  "
+		if i == m.updateCursor {
+			prefix = "> "
+		}
+		line := fmt.Sprintf("%s%s %s", prefix, c.Short, c.Subject)
+		if i == m.updateCursor {
+			line = ui.StyleSelected.Render(line)
+		}
+		b.WriteString(line + "\n")
+		if m.updateExpanded[c.Hash] && c.Body != "" {
+			b.WriteString(ui.StyleMuted.Render(indentLines(c.Body, "    ")) + "\n")
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(ui.StyleMuted.Render("y install in new terminal and exit · enter show/hide details · n/esc skip"))
+	return ui.StyleConfirmBox.Render(b.String())
+}
+
+func (m Model) renderUpdatesScreen() string {
+	var b strings.Builder
+	b.WriteString(ui.StyleInputPrompt.Render("Updates"))
+	b.WriteString("\n")
+	if m.updateChecking {
+		b.WriteString(ui.StyleMuted.Render("Checking for updates..."))
+		return b.String()
+	}
+	if m.updateInfo.CheckError != "" {
+		b.WriteString(ui.StyleError.Render("Check failed: ") + m.updateInfo.CheckError)
+		return b.String()
+	}
+	if m.updateInfo.RepoPath == "" {
+		b.WriteString(ui.StyleMuted.Render("No update information loaded."))
+		return b.String()
+	}
+	b.WriteString(ui.StyleMuted.Render("Repo: ") + m.updateInfo.RepoPath + "\n")
+	b.WriteString(ui.StyleMuted.Render("Branch: ") + m.updateInfo.Branch + " -> " + m.updateInfo.Upstream + "\n")
+	b.WriteString(ui.StyleMuted.Render("Current: ") + shortCommit(m.updateInfo.CurrentCommit) + "\n")
+	b.WriteString(ui.StyleMuted.Render("Latest: ") + shortCommit(m.updateInfo.LatestCommit) + "\n\n")
+
+	commits := m.updateCommits()
+	if len(commits) == 0 {
+		b.WriteString(ui.StyleSuccess.Render("No newer commits found."))
+		return b.String()
+	}
+	if len(m.updateInfo.Available) > 0 {
+		b.WriteString(ui.StyleSuccess.Render(fmt.Sprintf("%d update(s) available", len(m.updateInfo.Available))) + "\n")
+	} else {
+		b.WriteString(ui.StyleMuted.Render("Recent history") + "\n")
+	}
+
+	rows := m.visibleRows()
+	if rows > len(commits) {
+		rows = len(commits)
+	}
+	start := m.updateCursor - rows/2
+	if start < 0 {
+		start = 0
+	}
+	if start+rows > len(commits) {
+		start = len(commits) - rows
+		if start < 0 {
+			start = 0
+		}
+	}
+	for i := start; i < start+rows && i < len(commits); i++ {
+		c := commits[i]
+		line := fmt.Sprintf("  %s  %s  %s", c.Short, c.Date, c.Subject)
+		if i == m.updateCursor {
+			line = ui.StyleSelected.Render(line)
+		}
+		b.WriteString(line + "\n")
+		if m.updateExpanded[c.Hash] && c.Body != "" {
+			b.WriteString(ui.StyleMuted.Render(indentLines(c.Body, "    ")) + "\n")
+		}
+	}
+	return b.String()
 }
 
 // ─── Clipboard bar ────────────────────────────────────────────────────────────
@@ -758,6 +874,10 @@ func (m Model) renderStatusBar() string {
 		}
 	}
 
+	if m.mode == ModeUpdates {
+		return render(withMore([]string{"[↑/↓]Nav", "[Enter]Details", "[i]Install selected", "[y]Install latest", "[ctrl+f]Refresh", "[Esc]Back"}))
+	}
+
 	// ── Normal mode ───────────────────────────────────────────────────────────
 
 	listLabel := "dirs"
@@ -767,7 +887,7 @@ func (m Model) renderStatusBar() string {
 
 	switch m.hintsMode {
 	case HintsNavigation:
-		return render(withMore([]string{"[" + k.pageUp + "/" + k.pageDown + "]Page", "[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot", "[" + k.searchKey + "]Search", "[" + k.toggleList + "]Files:" + listLabel, "[" + k.toggleHidden + "]Hidden"}))
+		return render(withMore([]string{"[" + k.pageUp + "/" + k.pageDown + "]Page", "[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot", "[" + k.searchKey + "]Search", "[" + k.showUpdates + "]Updates", "[" + k.toggleList + "]Files:" + listLabel, "[" + k.toggleHidden + "]Hidden"}))
 	case HintsActions:
 		hints := []string{"[" + k.add + "]Add", "[" + k.delete + "]Delete", "[" + k.rename + "]Rename", "[" + k.yank + "/" + k.cut + "]Yank/Cut", "[" + k.paste + "]Paste"}
 		if m.clipboardPath == "" {
@@ -798,6 +918,24 @@ func renderHintKeys(row string) string {
 		row = row[end+1:]
 	}
 	return b.String()
+}
+
+func shortCommit(hash string) string {
+	if len(hash) > 7 {
+		return hash[:7]
+	}
+	if hash == "" {
+		return "unknown"
+	}
+	return hash
+}
+
+func indentLines(s string, prefix string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	for i, line := range lines {
+		lines[i] = prefix + strings.TrimSpace(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

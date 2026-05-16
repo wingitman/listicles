@@ -44,6 +44,7 @@ type Keybinds struct {
 	OpenExplorer     string `toml:"open_explorer"`
 	Bookmark         string `toml:"bookmark"`
 	ShowHints        string `toml:"show_hints"`
+	ShowUpdates      string `toml:"show_updates"`
 }
 
 // Display holds display preferences.
@@ -60,11 +61,20 @@ type Apps struct {
 	Opener string `toml:"opener"`
 }
 
+// Updates holds update-check and installer preferences.
+type Updates struct {
+	DisableChecks bool   `toml:"disable_checks"`
+	CurrentCommit string `toml:"current_commit"`
+	RepoPath      string `toml:"repo_path"`
+	Terminal      string `toml:"terminal"`
+}
+
 // Config is the root config struct.
 type Config struct {
 	Keybinds Keybinds `toml:"keybinds"`
 	Display  Display  `toml:"display"`
 	Apps     Apps     `toml:"apps"`
+	Updates  Updates  `toml:"updates"`
 }
 
 // keybindEntries is the single authoritative list of every keybind TOML key
@@ -104,6 +114,7 @@ var keybindEntries = []struct{ key, comment string }{
 	{"open_explorer", "open in system file explorer"},
 	{"bookmark", "bookmark current selection"},
 	{"show_hints", "cycle hint display mode"},
+	{"show_updates", "show update history and installers"},
 }
 
 // displayEntries is the authoritative list of every display TOML key, used for
@@ -119,6 +130,14 @@ var displayEntries = []string{
 var appEntries = []string{
 	"editor",
 	"opener",
+}
+
+// updateEntries is the authoritative list of every [updates] TOML key.
+var updateEntries = []string{
+	"disable_checks",
+	"current_commit",
+	"repo_path",
+	"terminal",
 }
 
 // Default returns a Config with all default values.
@@ -157,6 +176,7 @@ func Default() *Config {
 			OpenExplorer:     "E",
 			Bookmark:         "b",
 			ShowHints:        "?",
+			ShowUpdates:      "U",
 		},
 		Display: Display{
 			ShowHidden:       false,
@@ -167,6 +187,12 @@ func Default() *Config {
 		Apps: Apps{
 			Editor: "",
 			Opener: "",
+		},
+		Updates: Updates{
+			DisableChecks: false,
+			CurrentCommit: "",
+			RepoPath:      "",
+			Terminal:      "",
 		},
 	}
 }
@@ -337,6 +363,9 @@ func applyKeybindDefaults(cfg *Config) {
 	if cfg.Keybinds.ShowHints == "" {
 		cfg.Keybinds.ShowHints = d.ShowHints
 	}
+	if cfg.Keybinds.ShowUpdates == "" {
+		cfg.Keybinds.ShowUpdates = d.ShowUpdates
+	}
 }
 
 // needsMigration returns true if the config file is missing any known keybind
@@ -359,6 +388,11 @@ func needsMigration(path string) bool {
 		}
 	}
 	for _, key := range appEntries {
+		if !fileContainsKey(content, key) {
+			return true
+		}
+	}
+	for _, key := range updateEntries {
 		if !fileContainsKey(content, key) {
 			return true
 		}
@@ -394,6 +428,25 @@ func WriteDefault(path string) error {
 	return os.WriteFile(path, []byte(buildTOML(Default())), 0644)
 }
 
+// RecordUpdateMetadata stores the installed commit and source repo path without
+// changing user-facing preferences.
+func RecordUpdateMetadata(commit, repoPath string) error {
+	cfg, err := Load()
+	if err != nil {
+		cfg = Default()
+	}
+	if commit != "" {
+		cfg.Updates.CurrentCommit = commit
+	}
+	if repoPath != "" {
+		cfg.Updates.RepoPath = repoPath
+	}
+	if err := os.MkdirAll(ConfigDir(), 0755); err != nil {
+		return err
+	}
+	return writeMigrated(ConfigPath(), cfg)
+}
+
 // buildTOML generates the full config file content from a Config, using
 // keybindEntries as the authoritative source so the output stays in sync
 // automatically when new keybinds are added.
@@ -401,6 +454,7 @@ func buildTOML(cfg *Config) string {
 	vals := keybindValues(&cfg.Keybinds)
 	d := cfg.Display
 	a := cfg.Apps
+	u := cfg.Updates
 
 	// Find longest key name for column alignment.
 	maxLen := 0
@@ -432,7 +486,12 @@ func buildTOML(cfg *Config) string {
 		"parent_depth = " + itoa(d.ParentDepth) + "\n\n" +
 		"[apps]\n" +
 		"editor = " + quote(a.Editor) + "   # leave empty to use $EDITOR env var\n" +
-		"opener = " + quote(a.Opener) + "   # leave empty to use xdg-open (Linux) / open (macOS)\n"
+		"opener = " + quote(a.Opener) + "   # leave empty to use xdg-open (Linux) / open (macOS)\n\n" +
+		"[updates]\n" +
+		"disable_checks = " + boolStr(u.DisableChecks) + "   # true disables startup update checks\n" +
+		"current_commit = " + quote(u.CurrentCommit) + "   # installed app commit, maintained by listicles\n" +
+		"repo_path = " + quote(u.RepoPath) + "   # source checkout used for updates\n" +
+		"terminal = " + quote(u.Terminal) + "   # optional terminal command for detached updates\n"
 
 	return out
 }
@@ -473,10 +532,15 @@ func keybindValues(k *Keybinds) map[string]string {
 		"open_explorer":      k.OpenExplorer,
 		"bookmark":           k.Bookmark,
 		"show_hints":         k.ShowHints,
+		"show_updates":       k.ShowUpdates,
 	}
 }
 
-func quote(s string) string { return `"` + s + `"` }
+func quote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
 func boolStr(b bool) string {
 	if b {
 		return "true"

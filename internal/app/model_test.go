@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/wingitman/listicles/internal/config"
+	appupdate "github.com/wingitman/listicles/internal/update"
 )
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -757,6 +758,41 @@ func TestUpdate_SearchKey_OpensSearchMode(t *testing.T) {
 
 	if m2.mode != ModeSearch {
 		t.Errorf("after '/': mode = %v, want ModeSearch", m2.mode)
+	}
+}
+
+func TestUpdate_UpdateCheckMsgShowsPrompt(t *testing.T) {
+	m, _ := newModelWithDirs(t, "a")
+	updated, _ := m.Update(updateCheckMsg{info: appupdate.Info{
+		RepoPath:      t.TempDir(),
+		Branch:        "feature",
+		Upstream:      "origin/feature",
+		CurrentCommit: "1111111",
+		LatestCommit:  "2222222",
+		Available: []appupdate.Commit{{
+			Hash:    "2222222",
+			Short:   "2222222",
+			Subject: "add updates",
+			Body:    "details",
+		}},
+	}})
+	m2 := updated.(Model)
+
+	if m2.mode != ModeUpdatePrompt {
+		t.Fatalf("mode = %v, want ModeUpdatePrompt", m2.mode)
+	}
+	if m2.updateCursor != 0 {
+		t.Fatalf("updateCursor = %d, want 0", m2.updateCursor)
+	}
+}
+
+func TestUpdate_ShowUpdatesKeyOpensUpdatesMode(t *testing.T) {
+	m, _ := newModelWithDirs(t, "a")
+	m.updateInfo = appupdate.Info{RepoPath: t.TempDir()}
+	m2 := sendKey(m, "U")
+
+	if m2.mode != ModeUpdates {
+		t.Fatalf("mode = %v, want ModeUpdates", m2.mode)
 	}
 }
 
