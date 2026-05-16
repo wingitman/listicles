@@ -74,13 +74,13 @@ const (
 	ConfirmPasteMove ConfirmAction = iota
 )
 
-// HintsMode controls which subset of keybind hints are shown in the status bar.
+// HintsMode controls which contextual hint page is shown in the status bar.
 type HintsMode int
 
 const (
-	HintsFull       HintsMode = iota // all hints (navigation + actions + view/app)
-	HintsNavigation                  // navigation hints only
-	HintsActions                     // file/clipboard/view/app hints only
+	HintsFull       HintsMode = iota // default hints for the current mode
+	HintsNavigation                  // secondary navigation/discovery hints
+	HintsActions                     // secondary action/view hints
 )
 
 // ClipOp is the type of pending clipboard operation.
@@ -269,11 +269,6 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 	ti := textinput.New()
 	ti.CharLimit = 256
 
-	listMode := ListDirsOnly
-	if cfg.Display.DefaultListMode == "dirs_and_files" {
-		listMode = ListDirsAndFiles
-	}
-
 	gitRoot := fs.FindGitRoot(startDir)
 	gitignorePatterns := fs.ReadGitignorePatterns(gitRoot)
 
@@ -287,7 +282,7 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 		cdFile:            cdFile,
 		openFile:          openFile,
 		rootDir:           startDir,
-		listMode:          listMode,
+		listMode:          listModeFromConfig(cfg),
 		showHidden:        cfg.Display.ShowHidden,
 		textInput:         ti,
 		keys:              resolveKeys(cfg.Keybinds),
@@ -593,6 +588,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case reloadConfigMsg:
+		cfg, err := config.Load()
+		if err != nil {
+			m.errorMsg = fmt.Sprintf("Could not reload config: %v", err)
+			m.mode = ModeError
+			return m, nil
+		}
+		if err := m.applyConfig(cfg); err != nil {
+			m.errorMsg = fmt.Sprintf("Could not apply config: %v", err)
+			m.mode = ModeError
+			return m, nil
+		}
+		m.statusMsg = "config reloaded"
+		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg {
+			return clearStatusMsg{}
+		})
 
 	case searchResultMsg:
 		m.searchRunning = false
@@ -934,7 +946,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Confirm / Enter: expand dir in-tree, or open file
+		// Confirm / Enter: expand dir in-tree, or edit file.
 		if matchKey(key, m.keys.confirm) {
 			e := m.selectedEntry()
 			if e != nil && e.IsDir() {
@@ -956,7 +968,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.openFile != "" {
 					return m, m.exitWithFile(e.Path)
 				}
-				return m, openDefaultCmd(e.Path, m.cfg.Apps.Opener)
+				return m, m.openEditor(e.Path)
 			}
 			return m, nil
 		}
@@ -1243,7 +1255,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.openFile != "" {
 				return m, m.exitWithFile(config.ConfigPath())
 			}
-			return m, m.openEditor(config.ConfigPath())
+			return m, m.openConfigEditor()
 		}
 	}
 
@@ -1432,6 +1444,21 @@ func nthSiblingAtDepth(nodes []TreeNode, targetDepth, fromOffset, n int) int {
 	return -1
 }
 
+func listModeFromConfig(cfg *config.Config) ListMode {
+	if cfg.Display.DefaultListMode == "dirs_and_files" {
+		return ListDirsAndFiles
+	}
+	return ListDirsOnly
+}
+
+func (m *Model) applyConfig(cfg *config.Config) error {
+	m.cfg = cfg
+	m.keys = resolveKeys(cfg.Keybinds)
+	m.showHidden = cfg.Display.ShowHidden
+	m.listMode = listModeFromConfig(cfg)
+	return m.rebuildTree()
+}
+
 // ─── Input / confirm ─────────────────────────────────────────────────────────
 
 func (m Model) submitInput() (tea.Model, tea.Cmd) {
@@ -1596,6 +1623,14 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 // ─── Editor / opener ─────────────────────────────────────────────────────────
 
 func (m Model) openEditor(path string) tea.Cmd {
+	return m.openEditorWithSuccess(path, reloadMsg{})
+}
+
+func (m Model) openConfigEditor() tea.Cmd {
+	return m.openEditorWithSuccess(config.ConfigPath(), reloadConfigMsg{})
+}
+
+func (m Model) openEditorWithSuccess(path string, success tea.Msg) tea.Cmd {
 	editor := m.cfg.Apps.Editor
 	if editor == "" {
 		editor = os.Getenv("EDITOR")
@@ -1621,11 +1656,11 @@ func (m Model) openEditor(path string) tea.Cmd {
 		if err != nil {
 			return errorMsg(fmt.Sprintf("Editor exited with error: %v", err))
 		}
-		return reloadMsg{}
+		return success
 	})
 }
 
-// openDefaultCmd opens path in the system file explorer using tea.ExecProcess.
+// openDefaultCmd opens path in the system file explorer without blocking listicles.
 // For files, it reveals the file in its containing folder. For directories, it
 // opens the directory directly. The behaviour is OS-specific:
 //   - macOS:   open -R <file>  /  open <dir>
@@ -1664,12 +1699,16 @@ func openDefaultCmd(path string, opener string) tea.Cmd {
 			}
 		}
 	}
-	return tea.ExecProcess(c, func(err error) tea.Msg {
-		if err != nil {
+	return func() tea.Msg {
+		detachOpenerProcess(c)
+		if err := c.Start(); err != nil {
 			return errorMsg(fmt.Sprintf("Could not open %q: %v", path, err))
 		}
+		if c.Process != nil {
+			_ = c.Process.Release()
+		}
 		return reloadMsg{}
-	})
+	}
 }
 
 // ─── Search ───────────────────────────────────────────────────────────────────
@@ -1742,10 +1781,10 @@ func (m *Model) applyLiveFilter() {
 }
 
 // confirmSearchSelection confirms the currently highlighted search result.
-//   - Text-match child (line snippet): open the parent file.
+//   - Text-match child (line snippet): edit the parent file.
 //   - Node with PendingChildren (text-search file parent): toggle expand/collapse.
 //   - Regular dir: toggle expand/collapse.
-//   - Regular file: open.
+//   - Regular file: edit.
 func (m Model) confirmSearchSelection() (tea.Model, tea.Cmd) {
 	if len(m.searchLiveNodes) == 0 || m.cursor >= len(m.searchLiveNodes) {
 		return m, nil
@@ -1757,7 +1796,7 @@ func (m Model) confirmSearchSelection() (tea.Model, tea.Cmd) {
 		if m.openFile != "" {
 			return m, m.exitWithFile(node.Entry.Path)
 		}
-		return m, openDefaultCmd(node.Entry.Path, m.cfg.Apps.Opener)
+		return m, m.openEditor(node.Entry.Path)
 	}
 
 	// Node with pending children = text-search file parent: toggle expand.
@@ -1789,11 +1828,11 @@ func (m Model) confirmSearchSelection() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Plain file: open or exit.
+	// Plain file: edit or exit.
 	if m.openFile != "" {
 		return m, m.exitWithFile(e.Path)
 	}
-	return m, openDefaultCmd(e.Path, m.cfg.Apps.Opener)
+	return m, m.openEditor(e.Path)
 }
 
 // expandSearchNode inserts the PendingChildren of node at idx into
@@ -2049,6 +2088,7 @@ func (m *Model) clampCursorSkipHeaders() {
 
 type errorMsg string
 type reloadMsg struct{ reloadPath string }
+type reloadConfigMsg struct{}
 type searchResultMsg struct{ results []search.Result }
 type digitTimeoutMsg struct{}
 type clearStatusMsg struct{}

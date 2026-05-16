@@ -1,6 +1,6 @@
 # listicles
 
-An interactive terminal file explorer. Type `listicles` (or `l`) to open it, navigate with the keyboard, and press Enter to `cd` into the selected directory.
+An interactive terminal file explorer. Type `listicles` (or `l`) to open it, navigate with the keyboard, and press Enter to expand directories or edit files.
 
 Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss](https://github.com/charmbracelet/lipgloss).
 
@@ -101,7 +101,7 @@ All keybinds are configurable. These are the defaults.
 | `Home` / `End` | Jump to first / last item |
 | `PgUp` / `PgDn` | Page up / down |
 | `1`–`9` (multi-digit supported) | Jump to Nth item at current depth |
-| `Enter` | `cd` to directory, or open file |
+| `Enter` | Expand directory, or edit file |
 
 Multi-digit jump: type digits within 500ms. The number being typed shows in the header (`→ 19`).
 
@@ -117,6 +117,7 @@ Multi-digit jump: type digits within 500ms. The number being typed shows in the 
 | `x` | Cut |
 | `p` | Paste into current directory | _Yes_|
 | `e` | Open in `$EDITOR` |
+| `E` | Open in system file explorer |
 
 ### Display & search
 
@@ -228,7 +229,7 @@ search        = "/"
 ---
 
 ## Shell integration
-`l` is a shell function (not an alias or script) that passes a temp file path to the binary. When you select a directory and press Enter, listicles writes the path to that file. The function reads it and calls `cd`. This is the only way to change the parent shell's directory — a subprocess can't do it.
+`l` is a shell function (not an alias or script) that passes a temp file path to the binary. When you select a directory and press `c`, listicles writes the path to that file. The function reads it and calls `cd`. This is the only way to change the parent shell's directory — a subprocess can't do it.
 
 Same pattern as `ranger`, `nnn`, and `zoxide`.
 

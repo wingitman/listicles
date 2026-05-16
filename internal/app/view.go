@@ -685,13 +685,7 @@ func (m Model) renderClipboardBar() string {
 // ─── Status bar ───────────────────────────────────────────────────────────────
 
 func (m Model) renderStatusBar() string {
-	// Transient message overrides status bar
-	if m.statusMsg != "" {
-		return ui.StyleSuccess.Render("  " + m.statusMsg)
-	}
-
 	k := m.keys
-	hintsKey := "[" + k.showHints + "]Hints"
 
 	truncate := func(s string) string {
 		if len(s) > m.width {
@@ -699,96 +693,111 @@ func (m Model) renderStatusBar() string {
 		}
 		return s
 	}
-	render := func(parts []string, suffix string) string {
-		row := strings.Join(parts, "  ")
-		if suffix != "" {
-			row += "  " + suffix
+	render := func(parts []string) string {
+		const maxHints = 6
+		if len(parts) > maxHints {
+			parts = parts[:maxHints]
 		}
-		return ui.StyleStatusBar.Render(truncate(row))
+		row := truncate(strings.Join(parts, "  "))
+		return ui.StyleStatusBar.Render(renderHintKeys(row))
+	}
+	withMore := func(parts []string) []string {
+		more := "[" + k.showHints + "/o" + "] More hints/config"
+		if len(parts) >= 6 {
+			parts = parts[:5]
+		}
+		return append(parts, more)
+	}
+
+	// Transient messages keep the hint cycler visible so [?] stays discoverable.
+	if m.statusMsg != "" {
+		return ui.StyleSuccess.Render(truncate("  " + m.statusMsg + "  [" + k.showHints + "/o" + "] More hints/config"))
+	}
+
+	if m.mode == ModeSearch {
+		if m.searchInputActive {
+			switch m.hintsMode {
+			case HintsNavigation:
+				return render(withMore([]string{"[-r]Recursive", "[-t]Contents", "[-rt]Both", "[Esc]Cancel"}))
+			case HintsActions:
+				return render(withMore([]string{"[Enter]Run full search", "[Esc]Cancel"}))
+			default:
+				return render(withMore([]string{"[Type]Filter", "[Enter]Run search", "[-r]Recursive", "[-t]Contents", "[Esc]Cancel"}))
+			}
+		}
+
+		switch m.hintsMode {
+		case HintsNavigation:
+			return render(withMore([]string{"[" + k.left + "]Collapse", "[" + k.right + "]Expand", "[Esc]Edit query", "[" + k.fullSearch + "]Rerun"}))
+		case HintsActions:
+			return render(withMore([]string{"[" + k.confirm + "]Edit/Open", "[Esc]Edit query", "[" + k.quit + "]Exit search"}))
+		default:
+			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Edit/Open", "[" + k.left + "/" + k.right + "]Collapse/Expand", "[Esc]Edit query", "[" + k.quit + "]Exit"}))
+		}
 	}
 
 	if m.mode == ModeRecents {
-		return render([]string{
-			"[" + k.up + "/" + k.down + "]Nav",
-			"[" + k.confirm + "]Open",
-			"[" + k.delete + "]Remove",
-			"[" + k.switchTabsGlobal + "]Global",
-			"[" + k.switchTabs + "]Bookmarks",
-			"[Esc]Back",
-		}, hintsKey)
+		switch m.hintsMode {
+		case HintsNavigation:
+			return render(withMore([]string{"[" + k.switchTabs + "]Bookmarks", "[" + k.switchTabsGlobal + "]Global", "[Esc]Back"}))
+		case HintsActions:
+			return render(withMore([]string{"[" + k.delete + "]Remove", "[" + k.quit + "]Back"}))
+		default:
+			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Open", "[" + k.delete + "]Remove", "[Esc]Back"}))
+		}
 	}
 
 	if m.mode == ModeBookmarks {
-		return render([]string{
-			"[" + k.up + "/" + k.down + "]Nav",
-			"[" + k.confirm + "]Open",
-			"[" + k.bookmark + "]Add",
-			"[" + k.delete + "]Remove",
-			"[" + k.rename + "]Rename",
-			"[" + k.switchTabsGlobal + "]Global",
-			"[" + k.switchTabs + "]Close",
-			"[Esc]Back",
-		}, hintsKey)
+		switch m.hintsMode {
+		case HintsNavigation:
+			return render(withMore([]string{"[" + k.switchTabsGlobal + "]Global", "[" + k.switchTabs + "]Close", "[Esc]Back"}))
+		case HintsActions:
+			return render(withMore([]string{"[" + k.bookmark + "]Add", "[" + k.delete + "]Remove", "[" + k.rename + "]Rename"}))
+		default:
+			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Open", "[" + k.delete + "]Remove", "[Esc]Back"}))
+		}
 	}
 
 	// ── Normal mode ───────────────────────────────────────────────────────────
 
-	detailLabel := []string{"none", "count", "size", "path", "modified", "created", "perms", "owner", "type"}[m.detailLevel]
 	listLabel := "dirs"
 	if m.listMode == ListDirsAndFiles {
 		listLabel = "all"
 	}
 
-	// Row 1 — Navigation: movement, tree interaction, discovery
-	navRow := []string{
-		"[" + k.up + "/" + k.down + "/" + k.left + "/" + k.right + "]Nav",
-		"[" + k.pageUp + "/" + k.pageDown + "]Page",
-		"[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot",
-		"[" + k.confirm + "]Expand",
-		"[" + k.cdDir + "]Cd",
-		"[" + k.searchKey + "]Search",
-		"[" + k.fullSearch + "]Full Search",
-		"[" + k.toggleHidden + "]Hidden",
-	}
-
-	// Row 2 — File operations: CRUD + clipboard + explorer
-	fileRow := []string{
-		"[" + k.add + "]Add",
-		"[" + k.delete + "]Delete",
-		"[" + k.rename + "]Rename",
-		"[" + k.edit + "]Edit",
-		"[" + k.openExplorer + "]Explorer",
-		"[" + k.yank + "]Yank",
-		"[" + k.cut + "]Cut",
-		"[" + k.paste + "]Paste",
-		"[" + k.copyPath + "]Copy Path",
-	}
-
-	// Row 3 — View & app: display toggles + navigation tabs + app controls
-	viewRow := []string{
-		"[" + k.details + "]Details:" + detailLabel,
-		"[" + k.toggleList + "]Files:" + listLabel,
-	}
-	if m.gitRoot != "" {
-		viewRow = append(viewRow, "["+k.ignore+"]Ignore")
-	}
-	viewRow = append(viewRow,
-		"["+k.switchTabs+"]Recents",
-		"["+k.bookmark+"]Bookmark",
-		"["+k.options+"]Options",
-		"["+k.quit+"]Quit",
-	)
-
 	switch m.hintsMode {
 	case HintsNavigation:
-		return render(navRow, hintsKey+":nav")
+		return render(withMore([]string{"[" + k.pageUp + "/" + k.pageDown + "]Page", "[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot", "[" + k.searchKey + "]Search", "[" + k.toggleList + "]Files:" + listLabel, "[" + k.toggleHidden + "]Hidden"}))
 	case HintsActions:
-		return render(fileRow, "") + "\n" + render(viewRow, hintsKey+":actions")
+		hints := []string{"[" + k.add + "]Add", "[" + k.delete + "]Delete", "[" + k.rename + "]Rename", "[" + k.yank + "/" + k.cut + "]Yank/Cut", "[" + k.paste + "]Paste"}
+		if m.clipboardPath == "" {
+			hints[4] = "[" + k.copyPath + "]Copy path"
+		}
+		return render(withMore(hints))
 	default: // HintsFull
-		return render(navRow, "") + "\n" +
-			render(fileRow, "") + "\n" +
-			render(viewRow, hintsKey+":full")
+		return render(withMore([]string{"[" + k.up + "/" + k.down + "/" + k.left + "/" + k.right + "]Nav", "[" + k.confirm + "]Expand/Edit", "[" + k.edit + "]Edit", "[" + k.openExplorer + "]Explorer", "[" + k.cdDir + "]Cd"}))
 	}
+}
+
+func renderHintKeys(row string) string {
+	var b strings.Builder
+	for len(row) > 0 {
+		start := strings.Index(row, "[")
+		if start < 0 {
+			b.WriteString(row)
+			break
+		}
+		b.WriteString(row[:start])
+		row = row[start:]
+		end := strings.Index(row, "]")
+		if end < 0 {
+			b.WriteString(row)
+			break
+		}
+		b.WriteString(ui.StyleHintKey.Render(row[:end+1]))
+		row = row[end+1:]
+	}
+	return b.String()
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

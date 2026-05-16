@@ -55,6 +55,10 @@ var (
 	StyleStatusBar = lipgloss.NewStyle().
 			Foreground(colorMuted)
 
+	StyleHintKey = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFE66D")).
+			Bold(true)
+
 	StyleConfirmBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorAccent).

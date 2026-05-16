@@ -2,6 +2,7 @@ package app
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -38,6 +39,16 @@ func makeEntry(name string, isDir bool) fs.Entry {
 		Type: entType,
 		Size: 1024,
 	}
+}
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func plain(s string) string {
+	return ansiRE.ReplaceAllString(s, "")
+}
+
+func hintCount(s string) int {
+	return strings.Count(plain(s), "[")
 }
 
 // ─── clamp ────────────────────────────────────────────────────────────────────
@@ -250,29 +261,96 @@ func TestRenderStatusBar_ContainsConfiguredKeys(t *testing.T) {
 	m := newViewModel(nil)
 	m.width = 500 // wide enough not to truncate any hints
 	m.nodes = []TreeNode{{Entry: makeEntry("dir", true), Depth: 0}}
-	out := m.renderStatusBar()
+	out := plain(m.renderStatusBar())
 
-	// All key hints should appear in Nano-style [key]Action format
 	for _, hint := range []string{
-		"[enter]", // confirm
-		"[pgup/",  // page_up
-		"pgdown]", // page_down
-		"[home/",  // jump_top
-		"end]",    // jump_bottom
-		"[y]",     // yank
-		"[x]",     // cut
-		"[p]",     // paste
-		"[Y]",     // copy_path
-		"[f]",     // toggle_list
-		"[i]",     // details
-		"[a]",     // add
-		"[d]",     // delete
-		"[r]",     // rename
-		"[e]",     // edit
-		"[o]",     // options
+		"[up/down/left/right]Nav",
+		"[enter]Expand/Edit",
+		"[e]Edit",
+		"[E]Explorer",
+		"[c]Cd",
+		"[?/o] More hints/config",
 	} {
 		if !strings.Contains(out, hint) {
 			t.Errorf("status bar missing key hint %q\nfull bar: %s", hint, out)
+		}
+	}
+}
+
+func TestRenderStatusBar_DefaultHintsAreNotCluttered(t *testing.T) {
+	m := newViewModel(nil)
+	m.width = 500
+	out := m.renderStatusBar()
+	if strings.Contains(plain(out), "\n") {
+		t.Fatalf("status bar should render one hint row, got:\n%s", plain(out))
+	}
+	if got := hintCount(out); got > 6 {
+		t.Fatalf("status bar should show at most 6 hints, got %d: %s", got, plain(out))
+	}
+}
+
+func TestRenderStatusBar_HighlightsHintKeys(t *testing.T) {
+	m := newViewModel(nil)
+	m.width = 500
+	out := m.renderStatusBar()
+	if !strings.Contains(plain(out), "[enter]Expand/Edit") {
+		t.Fatalf("styled status bar should preserve plain hint text, got %q", plain(out))
+	}
+}
+
+func TestRenderStatusBar_MoreHintsPage(t *testing.T) {
+	m := newViewModel(nil)
+	m.width = 500
+	m.hintsMode = HintsActions
+	out := plain(m.renderStatusBar())
+
+	for _, hint := range []string{"[a]Add", "[d]Delete", "[r]Rename", "[y/x]Yank/Cut", "[Y]Copy path", "[?/o] More hints/config"} {
+		if !strings.Contains(out, hint) {
+			t.Errorf("more hints page missing %q\nfull bar: %s", hint, out)
+		}
+	}
+	if got := hintCount(out); got > 6 {
+		t.Fatalf("more hints page should show at most 6 hints, got %d: %s", got, out)
+	}
+}
+
+func TestRenderStatusBar_SearchModeIsContextual(t *testing.T) {
+	m := newViewModel(nil)
+	m.width = 500
+	m.mode = ModeSearch
+	m.searchInputActive = true
+	out := plain(m.renderStatusBar())
+
+	for _, hint := range []string{"[Type]Filter", "[Enter]Run search", "[-r]Recursive", "[-t]Contents", "[Esc]Cancel", "[?/o] More hints/config"} {
+		if !strings.Contains(out, hint) {
+			t.Errorf("search hints missing %q\nfull bar: %s", hint, out)
+		}
+	}
+	for _, irrelevant := range []string{"[a]Add", "[d]Delete", "[E]Explorer", "[c]Cd"} {
+		if strings.Contains(out, irrelevant) {
+			t.Errorf("search hints should not contain normal-mode hint %q\nfull bar: %s", irrelevant, out)
+		}
+	}
+	if got := hintCount(out); got > 6 {
+		t.Fatalf("search hints should show at most 6 hints, got %d: %s", got, out)
+	}
+}
+
+func TestRenderStatusBar_AllContextRowsAtMostSixHints(t *testing.T) {
+	for _, mode := range []Mode{ModeNormal, ModeSearch, ModeRecents, ModeBookmarks} {
+		for _, hintsMode := range []HintsMode{HintsFull, HintsNavigation, HintsActions} {
+			m := newViewModel(nil)
+			m.width = 500
+			m.mode = mode
+			m.hintsMode = hintsMode
+			m.searchInputActive = true
+			out := m.renderStatusBar()
+			if got := hintCount(out); got > 6 {
+				t.Fatalf("mode=%v hintsMode=%v should show at most 6 hints, got %d: %s", mode, hintsMode, got, plain(out))
+			}
+			if !strings.Contains(plain(out), "[?/o] More hints/config") {
+				t.Fatalf("mode=%v hintsMode=%v missing more hints: %s", mode, hintsMode, plain(out))
+			}
 		}
 	}
 }
@@ -291,6 +369,7 @@ func TestRenderStatusBar_ShowsListMode(t *testing.T) {
 	m := newViewModel(nil)
 	m.width = 400 // wide enough for all hints including new keybinds
 	m.listMode = ListDirsAndFiles
+	m.hintsMode = HintsNavigation
 	out := m.renderStatusBar()
 	if !strings.Contains(out, "Files:all") {
 		t.Errorf("status bar should show 'Files:all', got:\n%s", out)

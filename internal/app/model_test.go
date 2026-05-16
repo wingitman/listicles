@@ -2,8 +2,10 @@ package app
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/wingitman/listicles/internal/config"
@@ -756,6 +758,134 @@ func TestUpdate_SearchKey_OpensSearchMode(t *testing.T) {
 	if m2.mode != ModeSearch {
 		t.Errorf("after '/': mode = %v, want ModeSearch", m2.mode)
 	}
+}
+
+func TestApplyConfig_UpdatesLiveKeybindsAndDisplay(t *testing.T) {
+	m, _ := newModelWithDirs(t, "visible")
+
+	cfg := config.Default()
+	cfg.Keybinds.Up = "k"
+	cfg.Keybinds.Down = "j"
+	cfg.Display.ShowHidden = true
+	cfg.Display.DefaultListMode = "dirs"
+
+	if err := m.applyConfig(cfg); err != nil {
+		t.Fatalf("applyConfig: %v", err)
+	}
+
+	if m.keys.up != "k" || m.keys.down != "j" {
+		t.Fatalf("keybinds not reloaded: up=%q down=%q", m.keys.up, m.keys.down)
+	}
+	if !m.showHidden {
+		t.Fatal("showHidden should be updated from reloaded config")
+	}
+	if m.listMode != ListDirsOnly {
+		t.Fatalf("listMode = %v, want ListDirsOnly", m.listMode)
+	}
+	if m.statusMsg != "" {
+		t.Fatalf("applyConfig should not set status directly, got %q", m.statusMsg)
+	}
+}
+
+func TestUpdate_ReloadConfigMsgReloadsConfigFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(config.ConfigDir(), 0755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	content := `
+[keybinds]
+up = "k"
+down = "j"
+
+[display]
+show_hidden = true
+default_list_mode = "dirs"
+search_max_results = 20
+parent_depth = 1
+
+[apps]
+editor = ""
+opener = ""
+`
+	if err := os.WriteFile(config.ConfigPath(), []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	m, _ := newModelWithDirs(t, "visible")
+	updated, _ := m.Update(reloadConfigMsg{})
+	m2 := updated.(Model)
+
+	if m2.keys.up != "k" || m2.keys.down != "j" {
+		t.Fatalf("config reload did not update keys: up=%q down=%q", m2.keys.up, m2.keys.down)
+	}
+	if !m2.showHidden || m2.listMode != ListDirsOnly {
+		t.Fatalf("config reload did not update display settings: showHidden=%v listMode=%v", m2.showHidden, m2.listMode)
+	}
+	if m2.statusMsg != "config reloaded" {
+		t.Fatalf("statusMsg = %q, want config reloaded", m2.statusMsg)
+	}
+}
+
+func TestUpdate_EnterFileOpensEditorNotExplorer(t *testing.T) {
+	if _, err := exec.LookPath("true"); err != nil {
+		t.Skip("true command not available")
+	}
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Display.DefaultListMode = "dirs_and_files"
+	cfg.Apps.Editor = "true"
+	cfg.Apps.Opener = filepath.Join(root, "missing-opener")
+	m, err := New(cfg, root, "", "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on file should return an editor command")
+	}
+	msg := cmd()
+	if err, ok := msg.(errorMsg); ok {
+		t.Fatalf("enter on file should use the configured editor, not the opener: %s", err)
+	}
+}
+
+func TestOpenDefaultCmd_CustomOpenerDoesNotWaitForGuiProcess(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh command not available")
+	}
+
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	script := filepath.Join(root, "opener.sh")
+	done := target + ".done"
+	content := "#!/bin/sh\nsleep 1\n: > \"$1.done\"\n"
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatalf("write opener script: %v", err)
+	}
+
+	cmd := openDefaultCmd(target, script)
+	start := time.Now()
+	if _, ok := cmd().(reloadMsg); !ok {
+		t.Fatal("custom opener should return reloadMsg after starting")
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("custom opener blocked for %v", elapsed)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(done); err == nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("custom opener process did not continue after listicles returned")
 }
 
 func TestUpdate_Yank_SetsClipboard(t *testing.T) {
