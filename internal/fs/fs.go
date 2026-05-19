@@ -6,13 +6,10 @@ import (
 	"io"
 	"mime"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
-	"syscall"
 )
 
 // EntryType distinguishes files from directories.
@@ -99,34 +96,6 @@ func permSymbolic(mode os.FileMode) string {
 	return string(buf)
 }
 
-// FileOwner returns "user:group" for path on Unix systems.
-// On Windows or on error, "N/A" is returned.
-func FileOwner(path string) string {
-	if runtime.GOOS == "windows" {
-		return "N/A"
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return "N/A"
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "N/A"
-	}
-	uid := strconv.Itoa(int(st.Uid))
-	gid := strconv.Itoa(int(st.Gid))
-
-	userName := uid
-	if u, err := user.LookupId(uid); err == nil {
-		userName = u.Username
-	}
-	groupName := gid
-	if g, err := user.LookupGroupId(gid); err == nil {
-		groupName = g.Name
-	}
-	return userName + ":" + groupName
-}
-
 // FileMimeType returns a short, friendly description of the file type based on
 // its extension (e.g. "Go source", "PNG image", "JSON data").
 // Directories always return "Directory".
@@ -183,17 +152,17 @@ var friendlyMimeLabels = map[string]string{
 	".pl":    "Perl script",
 	".r":     "R source",
 	// Data / config
-	".json":  "JSON data",
-	".yaml":  "YAML data",
-	".yml":   "YAML data",
-	".toml":  "TOML config",
-	".xml":   "XML data",
-	".csv":   "CSV data",
-	".sql":   "SQL script",
-	".env":   "Env config",
-	".ini":   "INI config",
-	".conf":  "Config file",
-	".lock":  "Lock file",
+	".json": "JSON data",
+	".yaml": "YAML data",
+	".yml":  "YAML data",
+	".toml": "TOML config",
+	".xml":  "XML data",
+	".csv":  "CSV data",
+	".sql":  "SQL script",
+	".env":  "Env config",
+	".ini":  "INI config",
+	".conf": "Config file",
+	".lock": "Lock file",
 	// Documents
 	".md":   "Markdown",
 	".txt":  "Plain text",
@@ -213,13 +182,13 @@ var friendlyMimeLabels = map[string]string{
 	".ico":  "Icon image",
 	".bmp":  "BMP image",
 	// Archives
-	".zip":  "ZIP archive",
-	".tar":  "TAR archive",
-	".gz":   "Gzip archive",
-	".bz2":  "Bzip2 archive",
-	".xz":   "XZ archive",
-	".7z":   "7-Zip archive",
-	".rar":  "RAR archive",
+	".zip": "ZIP archive",
+	".tar": "TAR archive",
+	".gz":  "Gzip archive",
+	".bz2": "Bzip2 archive",
+	".xz":  "XZ archive",
+	".7z":  "7-Zip archive",
+	".rar": "RAR archive",
 	// Media
 	".mp3":  "MP3 audio",
 	".wav":  "WAV audio",
@@ -234,16 +203,16 @@ var friendlyMimeLabels = map[string]string{
 	".htm":  "HTML file",
 	".css":  "CSS stylesheet",
 	// Executables / binaries
-	".exe": "Windows executable",
-	".so":  "Shared library",
-	".a":   "Static library",
+	".exe":   "Windows executable",
+	".so":    "Shared library",
+	".a":     "Static library",
 	".dylib": "Dynamic library",
 	// Other
-	".log":  "Log file",
-	".tmp":  "Temp file",
-	".bak":  "Backup file",
-	".pem":  "PEM certificate",
-	".key":  "Key file",
+	".log": "Log file",
+	".tmp": "Temp file",
+	".bak": "Backup file",
+	".pem": "PEM certificate",
+	".key": "Key file",
 }
 
 // ScanDir lists entries in dirPath according to showHidden and showFiles flags.
