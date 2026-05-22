@@ -4,10 +4,11 @@ package search
 
 import (
 	"bufio"
-	"fmt"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/wingitman/listicles/internal/fs"
@@ -107,8 +108,8 @@ func runTextSearch(t Tools, req Request, emit func(Result)) error {
 
 	if t.HasRg {
 		args := []string{
+			"--json",
 			"--line-number",
-			"--no-heading",
 			"--color", "never",
 		}
 		if req.Hidden {
@@ -146,26 +147,82 @@ func runTextSearch(t Tools, req Request, emit func(Result)) error {
 		}
 	}
 
-	// rg/grep output: path:line_num:line_content
+	if t.HasRg {
+		return streamLines(cmd, req.Dir, func(raw string) {
+			if r, ok := parseRgJSONLine(raw); ok {
+				emit(r)
+			}
+		})
+	}
+
+	// grep output: path:line_num:line_content
 	return streamLines(cmd, req.Dir, func(raw string) {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			return
 		}
-		// Parse "path:linenum:content"
-		parts := strings.SplitN(raw, ":", 3)
-		if len(parts) < 2 {
-			return
+		if r, ok := parseTextMatchLine(raw); ok {
+			emit(r)
 		}
-		path := parts[0]
-		lineContent := ""
-		lineNum := 0
-		if len(parts) >= 3 {
-			lineContent = strings.TrimSpace(parts[2])
-			fmt.Sscanf(parts[1], "%d", &lineNum)
-		}
-		emit(Result{Path: path, Line: lineContent, LineNum: lineNum})
 	})
+}
+
+type rgJSONLine struct {
+	Type string `json:"type"`
+	Data struct {
+		Path struct {
+			Text string `json:"text"`
+		} `json:"path"`
+		LineNumber int `json:"line_number"`
+		Lines      struct {
+			Text string `json:"text"`
+		} `json:"lines"`
+	} `json:"data"`
+}
+
+func parseRgJSONLine(raw string) (Result, bool) {
+	var msg rgJSONLine
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		return Result{}, false
+	}
+	if msg.Type != "match" || msg.Data.Path.Text == "" {
+		return Result{}, false
+	}
+	return Result{
+		Path:    msg.Data.Path.Text,
+		Line:    strings.TrimSpace(msg.Data.Lines.Text),
+		LineNum: msg.Data.LineNumber,
+	}, true
+}
+
+func parseTextMatchLine(raw string) (Result, bool) {
+	first := strings.IndexByte(raw, ':')
+	if first < 0 {
+		return Result{}, false
+	}
+	start := 0
+	if len(raw) >= 3 && raw[1] == ':' && (raw[2] == '\\' || raw[2] == '/') {
+		start = 2
+	}
+	lineSepRel := strings.IndexByte(raw[start:], ':')
+	if lineSepRel < 0 {
+		return Result{}, false
+	}
+	lineSep := start + lineSepRel
+	path := raw[:lineSep]
+	rest := raw[lineSep+1:]
+	contentSep := strings.IndexByte(rest, ':')
+	lineNumText := rest
+	lineContent := ""
+	if contentSep >= 0 {
+		lineNumText = rest[:contentSep]
+		lineContent = rest[contentSep+1:]
+	}
+	lineNum, err := strconv.Atoi(lineNumText)
+	if path == "" || err != nil {
+		return Result{}, false
+	}
+	return Result{Path: path, Line: strings.TrimSpace(lineContent), LineNum: lineNum}, true
 }
 
 // streamLines runs cmd and calls cb for each output line.

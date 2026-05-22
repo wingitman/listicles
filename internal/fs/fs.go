@@ -220,6 +220,10 @@ var friendlyMimeLabels = map[string]string{
 // have their Ignored field set to true but are still included in the result so
 // they can be rendered dimmed when show_hidden is on.
 func ScanDir(dirPath string, showHidden bool, showFiles bool, gitignorePatterns []string) ([]Entry, error) {
+	if IsDriveListRoot(dirPath) {
+		return ListDrives()
+	}
+
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -275,6 +279,51 @@ func ScanDir(dirPath string, showHidden bool, showFiles bool, gitignorePatterns 
 	})
 
 	return result, nil
+}
+
+// DriveListRoot is a virtual root used on Windows to list all available drives.
+const DriveListRoot = "::drives::"
+
+func IsDriveListRoot(path string) bool {
+	return path == DriveListRoot
+}
+
+func ListDrives() ([]Entry, error) {
+	mask, err := logicalDrivesMask()
+	if err != nil {
+		return nil, err
+	}
+	return DrivesFromMask(mask), nil
+}
+
+func DrivesFromMask(mask uint32) []Entry {
+	entries := []Entry{}
+	for i := 0; i < 26; i++ {
+		if mask&(1<<uint(i)) == 0 {
+			continue
+		}
+		letter := string(rune('A' + i))
+		path := letter + ":" + string(filepath.Separator)
+		entries = append(entries, Entry{
+			Name: letter + ":",
+			Path: path,
+			Type: EntryDir,
+		})
+	}
+	return entries
+}
+
+func IsWindowsDriveRoot(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	vol := filepath.VolumeName(cleaned)
+	if len(vol) != 2 || vol[1] != ':' {
+		return false
+	}
+	rest := strings.TrimPrefix(cleaned, vol)
+	return rest == string(filepath.Separator) || rest == ""
 }
 
 // DirStats returns file count, folder count, and total size for dirPath (non-recursive top-level).
@@ -336,6 +385,12 @@ func RenameEntry(oldPath string, newName string) error {
 // ParentDir returns the parent directory of path.
 // Returns path unchanged if already at root.
 func ParentDir(path string) string {
+	if IsDriveListRoot(path) {
+		return path
+	}
+	if IsWindowsDriveRoot(path) {
+		return DriveListRoot
+	}
 	parent := filepath.Dir(path)
 	if parent == path {
 		return path

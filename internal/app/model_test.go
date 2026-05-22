@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/wingitman/listicles/internal/config"
+	"github.com/wingitman/listicles/internal/fs"
 	appupdate "github.com/wingitman/listicles/internal/update"
 )
 
@@ -364,6 +365,41 @@ func TestGoToParentDir_AtFilesystemRoot(t *testing.T) {
 	// Should be a no-op
 	if m.rootDir != "/" {
 		t.Error("goToParentDir at / should be a no-op")
+	}
+}
+
+func TestGoToParentDir_AtDriveListRootIsNoOp(t *testing.T) {
+	m, _ := newModelWithDirs(t, "a")
+	m.rootDir = fs.DriveListRoot
+	m.goToParentDir()
+	if m.rootDir != fs.DriveListRoot {
+		t.Fatalf("rootDir = %q, want drive list root", m.rootDir)
+	}
+}
+
+func TestInitTree_DriveListRootShowsDrives(t *testing.T) {
+	m, _ := newModelWithDirs(t, "a")
+	if err := m.initTree(fs.DriveListRoot); err != nil {
+		t.Fatalf("initTree drive list: %v", err)
+	}
+	if m.rootDir != fs.DriveListRoot {
+		t.Fatalf("rootDir = %q, want drive list root", m.rootDir)
+	}
+	if m.nodes == nil {
+		t.Fatal("drive list nodes should be an empty slice or entries, not nil")
+	}
+}
+
+func TestDriveListSelectionOpensDrive(t *testing.T) {
+	m, _ := newModelWithDirs(t, "a")
+	drive := t.TempDir()
+	m.rootDir = fs.DriveListRoot
+	m.nodes = []TreeNode{{Entry: fs.Entry{Name: "T:", Path: drive, Type: fs.EntryDir}}}
+	m.cursor = 0
+
+	m2 := sendSpecialKey(m, tea.KeyEnter)
+	if m2.rootDir != drive {
+		t.Fatalf("rootDir = %q, want %q", m2.rootDir, drive)
 	}
 }
 
@@ -888,6 +924,60 @@ func TestUpdate_EnterFileOpensEditorNotExplorer(t *testing.T) {
 	msg := cmd()
 	if err, ok := msg.(errorMsg); ok {
 		t.Fatalf("enter on file should use the configured editor, not the opener: %s", err)
+	}
+}
+
+func TestConfirmSearchSelection_TextMatchWritesOpenFileWithLine(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "file.txt")
+	if err := os.WriteFile(path, []byte("one\ntwo\n"), 0644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	openFile := filepath.Join(root, "open-target")
+	m := newModel(t, root)
+	m.openFile = openFile
+	m.mode = ModeSearch
+	m.searchLiveNodes = []TreeNode{{
+		Entry:        fs.Entry{Name: "file.txt", Path: path, Type: fs.EntryFile},
+		IsTextMatch:  true,
+		MatchLineNum: 2,
+	}}
+
+	_, cmd := m.confirmSearchSelection()
+	if cmd == nil {
+		t.Fatal("text match should return an open-file command")
+	}
+	_ = cmd()
+	target, err := os.ReadFile(openFile)
+	if err != nil {
+		t.Fatalf("read open target: %v", err)
+	}
+	want := path + ":2"
+	if string(target) != want {
+		t.Fatalf("open target = %q, want %q", string(target), want)
+	}
+}
+
+func TestEditorArgs_WithLineNumber(t *testing.T) {
+	path := `D:\Projects\listicles\main.go`
+	cases := []struct {
+		editor string
+		want   []string
+	}{
+		{"nvim", []string{"+23", path}},
+		{"code", []string{"--goto", path + ":23"}},
+		{"notepad.exe", []string{path}},
+	}
+	for _, c := range cases {
+		got := editorArgs(c.editor, path, 23)
+		if len(got) != len(c.want) {
+			t.Fatalf("editorArgs(%q) len = %d, want %d: %v", c.editor, len(got), len(c.want), got)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("editorArgs(%q)[%d] = %q, want %q", c.editor, i, got[i], c.want[i])
+			}
+		}
 	}
 }
 

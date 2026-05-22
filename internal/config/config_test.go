@@ -341,6 +341,99 @@ func TestNeedsMigration_FullConfigNoMigration(t *testing.T) {
 	}
 }
 
+func TestEnsureConfig_PreservesUserValuesAndAddsMissing(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", filepath.Join(t.TempDir(), "AppData", "Roaming"))
+	if err := os.MkdirAll(ConfigDir(), 0755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	content := `[keybinds]
+up = "k"
+down = "j"
+
+[display]
+show_hidden = true
+`
+	if err := os.WriteFile(ConfigPath(), []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := EnsureConfig(false); err != nil {
+		t.Fatalf("EnsureConfig: %v", err)
+	}
+	updatedBytes, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	updated := string(updatedBytes)
+	if !strings.Contains(updated, `up = "k"`) || !strings.Contains(updated, `down = "j"`) {
+		t.Fatalf("custom keybinds were not preserved:\n%s", updated)
+	}
+	if !sectionContainsKey(updated, "keybinds", "bookmark") {
+		t.Fatalf("missing keybind was not added:\n%s", updated)
+	}
+	if !sectionContainsKey(updated, "display", "parent_depth") {
+		t.Fatalf("missing display key was not added:\n%s", updated)
+	}
+}
+
+func TestEnsureConfig_DefaultResetOverwritesUserValues(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", filepath.Join(t.TempDir(), "AppData", "Roaming"))
+	if err := os.MkdirAll(ConfigDir(), 0755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(ConfigPath(), []byte("[keybinds]\nup = \"k\"\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := EnsureConfig(true); err != nil {
+		t.Fatalf("EnsureConfig reset: %v", err)
+	}
+	updatedBytes, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	updated := string(updatedBytes)
+	if !strings.Contains(updated, `up                 = "up"`) && !strings.Contains(updated, `up = "up"`) {
+		t.Fatalf("default reset did not restore default up key:\n%s", updated)
+	}
+}
+
+func TestRecordUpdateMetadata_PreservesUserConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", filepath.Join(t.TempDir(), "AppData", "Roaming"))
+	if err := os.MkdirAll(ConfigDir(), 0755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	content := `[keybinds]
+up = "k"
+down = "j"
+
+[updates]
+current_commit = "old"
+repo_path = "old-repo"
+`
+	if err := os.WriteFile(ConfigPath(), []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := RecordUpdateMetadata("new", "new-repo"); err != nil {
+		t.Fatalf("RecordUpdateMetadata: %v", err)
+	}
+	updatedBytes, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	updated := string(updatedBytes)
+	if !strings.Contains(updated, `up = "k"`) || !strings.Contains(updated, `down = "j"`) {
+		t.Fatalf("custom keybinds were not preserved:\n%s", updated)
+	}
+	if !strings.Contains(updated, `current_commit = "new"`) || !strings.Contains(updated, `repo_path = "new-repo"`) {
+		t.Fatalf("update metadata was not written:\n%s", updated)
+	}
+}
+
 func TestKeybindEntries_CoversAllStructFields(t *testing.T) {
 	// Every key in keybindEntries must appear in keybindValues output.
 	d := Default()

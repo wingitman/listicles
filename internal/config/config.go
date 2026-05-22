@@ -226,10 +226,7 @@ func Load() (*Config, error) {
 	path := ConfigPath()
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(ConfigDir(), 0755); err != nil {
-			return cfg, nil
-		}
-		if err := WriteDefault(path); err != nil {
+		if err := EnsureConfig(false); err != nil {
 			return cfg, nil
 		}
 		return cfg, nil
@@ -254,9 +251,9 @@ func Load() (*Config, error) {
 		cfg.Display.DefaultListMode = "dirs_and_files"
 	}
 
-	// Migration: rewrite file if any known key is missing, preserving user values.
+	// Migration: add only missing keys, preserving user values and existing text.
 	if needsMigration(path) {
-		_ = writeMigrated(path, cfg) // non-fatal
+		_ = EnsureConfig(false) // non-fatal
 	}
 
 	return cfg, nil
@@ -428,23 +425,204 @@ func WriteDefault(path string) error {
 	return os.WriteFile(path, []byte(buildTOML(Default())), 0644)
 }
 
-// RecordUpdateMetadata stores the installed commit and source repo path without
-// changing user-facing preferences.
-func RecordUpdateMetadata(commit, repoPath string) error {
-	cfg, err := Load()
-	if err != nil {
-		cfg = Default()
-	}
-	if commit != "" {
-		cfg.Updates.CurrentCommit = commit
-	}
-	if repoPath != "" {
-		cfg.Updates.RepoPath = repoPath
-	}
+// EnsureConfig creates the config if missing and adds only missing known keys.
+// When resetDefault is true, it intentionally rewrites the full file to defaults.
+func EnsureConfig(resetDefault bool) error {
+	path := ConfigPath()
 	if err := os.MkdirAll(ConfigDir(), 0755); err != nil {
 		return err
 	}
-	return writeMigrated(ConfigPath(), cfg)
+	if resetDefault {
+		return WriteDefault(path)
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return WriteDefault(path)
+	}
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	updated := ensureMissingConfigKeys(content)
+	if updated == content {
+		return nil
+	}
+	return os.WriteFile(path, []byte(updated), 0644)
+}
+
+func ensureMissingConfigKeys(content string) string {
+	content = ensureSectionEntries(content, "keybinds", keybindDefaultLines())
+	content = ensureSectionEntries(content, "display", displayDefaultLines())
+	content = ensureSectionEntries(content, "apps", appsDefaultLines())
+	content = ensureSectionEntries(content, "updates", updatesDefaultLines())
+	return content
+}
+
+func ensureSectionEntries(content, section string, entries map[string]string) string {
+	for _, key := range orderedKeys(entries) {
+		if sectionContainsKey(content, section, key) {
+			continue
+		}
+		content = insertSectionLine(content, section, entries[key])
+	}
+	return content
+}
+
+func sectionContainsKey(content, section, key string) bool {
+	inSection := false
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inSection = trimmed == "["+section+"]"
+			continue
+		}
+		if !inSection || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, key+"=") || strings.HasPrefix(trimmed, key+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func insertSectionLine(content, section, line string) string {
+	newline := "\n"
+	if strings.Contains(content, "\r\n") {
+		newline = "\r\n"
+	}
+	lines := strings.Split(content, newline)
+	sectionHeader := "[" + section + "]"
+	sectionIdx := -1
+	insertIdx := len(lines)
+	for i, lineText := range lines {
+		trimmed := strings.TrimSpace(lineText)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if trimmed == sectionHeader {
+				sectionIdx = i
+				insertIdx = len(lines)
+				continue
+			}
+			if sectionIdx >= 0 {
+				insertIdx = i
+				break
+			}
+		}
+	}
+	if sectionIdx < 0 {
+		if strings.TrimSpace(content) != "" && !strings.HasSuffix(content, newline) {
+			content += newline
+		}
+		return content + newline + sectionHeader + newline + line + newline
+	}
+	lines = append(lines[:insertIdx], append([]string{line}, lines[insertIdx:]...)...)
+	return strings.Join(lines, newline)
+}
+
+func orderedKeys(entries map[string]string) []string {
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[j] < keys[i] {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+	return keys
+}
+
+func keybindDefaultLines() map[string]string {
+	d := Default().Keybinds
+	vals := keybindValues(&d)
+	lines := map[string]string{}
+	for _, e := range keybindEntries {
+		lines[e.key] = e.key + " = " + quote(vals[e.key])
+	}
+	return lines
+}
+
+func displayDefaultLines() map[string]string {
+	d := Default().Display
+	return map[string]string{
+		"show_hidden":        "show_hidden = " + boolStr(d.ShowHidden),
+		"default_list_mode":  "default_list_mode = " + quote(d.DefaultListMode),
+		"search_max_results": "search_max_results = " + itoa(d.SearchMaxResults),
+		"parent_depth":       "parent_depth = " + itoa(d.ParentDepth),
+	}
+}
+
+func appsDefaultLines() map[string]string {
+	d := Default().Apps
+	return map[string]string{
+		"editor": "editor = " + quote(d.Editor),
+		"opener": "opener = " + quote(d.Opener),
+	}
+}
+
+func updatesDefaultLines() map[string]string {
+	d := Default().Updates
+	return map[string]string{
+		"disable_checks": "disable_checks = " + boolStr(d.DisableChecks),
+		"current_commit": "current_commit = " + quote(d.CurrentCommit),
+		"repo_path":      "repo_path = " + quote(d.RepoPath),
+		"terminal":       "terminal = " + quote(d.Terminal),
+	}
+}
+
+// RecordUpdateMetadata stores the installed commit and source repo path without
+// changing user-facing preferences.
+func RecordUpdateMetadata(commit, repoPath string) error {
+	if err := EnsureConfig(false); err != nil {
+		return err
+	}
+	path := ConfigPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	if commit != "" {
+		content = setSectionKey(content, "updates", "current_commit", quote(commit))
+	}
+	if repoPath != "" {
+		content = setSectionKey(content, "updates", "repo_path", quote(repoPath))
+	}
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func setSectionKey(content, section, key, value string) string {
+	if !sectionContainsKey(content, section, key) {
+		return insertSectionLine(content, section, key+" = "+value)
+	}
+	newline := "\n"
+	if strings.Contains(content, "\r\n") {
+		newline = "\r\n"
+	}
+	lines := strings.Split(content, newline)
+	inSection := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inSection = trimmed == "["+section+"]"
+			continue
+		}
+		if !inSection || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, key+"=") || strings.HasPrefix(trimmed, key+" ") {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			comment := ""
+			if idx := strings.Index(line, "#"); idx >= 0 {
+				comment = " " + strings.TrimSpace(line[idx:])
+			}
+			lines[i] = indent + key + " = " + value + comment
+			break
+		}
+	}
+	return strings.Join(lines, newline)
 }
 
 // buildTOML generates the full config file content from a Config, using

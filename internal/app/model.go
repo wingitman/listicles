@@ -316,7 +316,10 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 
 func (m *Model) initTree(dir string) error {
 	// Re-read gitignore patterns in case they changed (e.g. after an ignore action).
-	if m.gitRoot != "" {
+	if fs.IsDriveListRoot(dir) {
+		m.gitRoot = ""
+		m.gitignorePatterns = nil
+	} else if m.gitRoot != "" {
 		m.gitignorePatterns = fs.ReadGitignorePatterns(m.gitRoot)
 	}
 	entries, err := fs.ScanDir(dir, m.showHidden, m.listMode == ListDirsAndFiles, m.gitignorePatterns)
@@ -548,13 +551,21 @@ func (m *Model) exitWithDir(dir string) tea.Cmd {
 // integrations) and the file's parent directory to cdFile (for shell cd).
 // Also records the file in recents and persists state.
 func (m *Model) exitWithFile(path string) tea.Cmd {
+	return m.exitWithFileAt(path, 0)
+}
+
+func (m *Model) exitWithFileAt(path string, lineNum int) tea.Cmd {
 	// Record recent.
 	if m.appState != nil {
 		state.AddRecent(m.appState, path, m.gitRootOrCwd())
 		_ = state.Save(config.ConfigDir(), m.appState)
 	}
 	if m.openFile != "" {
-		_ = os.WriteFile(m.openFile, []byte(path), 0600)
+		openTarget := path
+		if lineNum > 0 {
+			openTarget = fmt.Sprintf("%s:%d", path, lineNum)
+		}
+		_ = os.WriteFile(m.openFile, []byte(openTarget), 0600)
 	}
 	if m.cdFile != "" {
 		_ = os.WriteFile(m.cdFile, []byte(filepath.Dir(path)), 0600)
@@ -1059,6 +1070,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Confirm / Enter: expand dir in-tree, or edit file.
 		if matchKey(key, m.keys.confirm) {
 			e := m.selectedEntry()
+			if e != nil && e.IsDir() && fs.IsDriveListRoot(m.rootDir) {
+				if err := m.initTree(e.Path); err != nil {
+					m.errorMsg = err.Error()
+					m.mode = ModeError
+				}
+				return m, nil
+			}
 			if e != nil && e.IsDir() {
 				// Expand/collapse the directory in-place.
 				node := m.selectedNode()
@@ -1185,6 +1203,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Expand / navigate right
 		if matchKey(key, m.keys.right) {
 			node := m.selectedNode()
+			if node != nil && node.Entry.IsDir() && fs.IsDriveListRoot(m.rootDir) {
+				if err := m.initTree(node.Entry.Path); err != nil {
+					m.errorMsg = err.Error()
+					m.mode = ModeError
+				}
+				return m, nil
+			}
 			if node != nil && node.Entry.IsDir() {
 				wasExpanded := node.Expanded
 				parentDepth := node.Depth
@@ -1529,6 +1554,11 @@ func (m *Model) goToParentDir() {
 			m.adjustOffset()
 			break
 		}
+		if fs.IsWindowsDriveRoot(prevRoot) && strings.EqualFold(n.Entry.Path, prevRoot) {
+			m.cursor = i
+			m.adjustOffset()
+			break
+		}
 	}
 }
 
@@ -1830,14 +1860,22 @@ func (m Model) executeConfirmedAction() (tea.Model, tea.Cmd) {
 // ─── Editor / opener ─────────────────────────────────────────────────────────
 
 func (m Model) openEditor(path string) tea.Cmd {
-	return m.openEditorWithSuccess(path, reloadMsg{})
+	return m.openEditorAt(path, 0)
+}
+
+func (m Model) openEditorAt(path string, lineNum int) tea.Cmd {
+	return m.openEditorAtWithSuccess(path, lineNum, reloadMsg{})
 }
 
 func (m Model) openConfigEditor() tea.Cmd {
-	return m.openEditorWithSuccess(config.ConfigPath(), reloadConfigMsg{})
+	return m.openEditorAtWithSuccess(config.ConfigPath(), 0, reloadConfigMsg{})
 }
 
 func (m Model) openEditorWithSuccess(path string, success tea.Msg) tea.Cmd {
+	return m.openEditorAtWithSuccess(path, 0, success)
+}
+
+func (m Model) openEditorAtWithSuccess(path string, lineNum int, success tea.Msg) tea.Cmd {
 	editor := m.cfg.Apps.Editor
 	if editor == "" {
 		editor = os.Getenv("EDITOR")
@@ -1858,13 +1896,30 @@ func (m Model) openEditorWithSuccess(path string, success tea.Msg) tea.Cmd {
 			return errorMsg("No editor found. Set $EDITOR or apps.editor in config.\nConfig: " + config.ConfigPath())
 		}
 	}
-	c := exec.Command(editor, path)
+	args := editorArgs(editor, path, lineNum)
+	c := exec.Command(editor, args...)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
 			return errorMsg(fmt.Sprintf("Editor exited with error: %v", err))
 		}
 		return success
 	})
+}
+
+func editorArgs(editor string, path string, lineNum int) []string {
+	if lineNum <= 0 {
+		return []string{path}
+	}
+	name := strings.ToLower(filepath.Base(editor))
+	name = strings.TrimSuffix(name, ".exe")
+	switch name {
+	case "vi", "vim", "nvim", "nano":
+		return []string{fmt.Sprintf("+%d", lineNum), path}
+	case "code", "code-insiders", "codium":
+		return []string{"--goto", fmt.Sprintf("%s:%d", path, lineNum)}
+	default:
+		return []string{path}
+	}
 }
 
 // openDefaultCmd opens path in the system file explorer without blocking listicles.
@@ -2001,9 +2056,9 @@ func (m Model) confirmSearchSelection() (tea.Model, tea.Cmd) {
 	// Text-match child row: open the file.
 	if node.IsTextMatch {
 		if m.openFile != "" {
-			return m, m.exitWithFile(node.Entry.Path)
+			return m, m.exitWithFileAt(node.Entry.Path, node.MatchLineNum)
 		}
-		return m, m.openEditor(node.Entry.Path)
+		return m, m.openEditorAt(node.Entry.Path, node.MatchLineNum)
 	}
 
 	// Node with pending children = text-search file parent: toggle expand.
@@ -2114,6 +2169,16 @@ func (m Model) runFullSearch() (tea.Model, tea.Cmd) {
 	query, recursive, textMode := parseSearchFlags(raw)
 	query = strings.TrimSpace(query)
 	if query == "" {
+		return m, nil
+	}
+	if fs.IsDriveListRoot(m.prevRootDir) {
+		m.searchQuery = query
+		m.searchRecursive = recursive
+		m.searchTextMode = textMode
+		m.searchRunning = false
+		m.searchInputActive = false
+		m.textInput.Blur()
+		m.applyLiveFilter()
 		return m, nil
 	}
 	m.searchQuery = query

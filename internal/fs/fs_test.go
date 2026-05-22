@@ -295,6 +295,32 @@ func TestParentDir_SingleLevel(t *testing.T) {
 	}
 }
 
+func TestDrivesFromMask_IncludesMappedLetters(t *testing.T) {
+	entries := DrivesFromMask((1 << 2) | (1 << 3) | (1 << 25))
+	if len(entries) != 3 {
+		t.Fatalf("len = %d, want 3", len(entries))
+	}
+	want := []string{"C:", "D:", "Z:"}
+	for i, name := range want {
+		if entries[i].Name != name {
+			t.Fatalf("entries[%d].Name = %q, want %q", i, entries[i].Name, name)
+		}
+		if !entries[i].IsDir() {
+			t.Fatalf("entries[%d] should be a directory", i)
+		}
+	}
+}
+
+func TestScanDir_DriveListRootUsesDrives(t *testing.T) {
+	entries, err := ScanDir(DriveListRoot, false, false, nil)
+	if err != nil {
+		t.Fatalf("ScanDir drive list: %v", err)
+	}
+	if entries == nil {
+		t.Fatal("drive list should return an empty slice or entries, not nil")
+	}
+}
+
 // ─── CopyEntry ────────────────────────────────────────────────────────────────
 
 func TestCopyEntry_File(t *testing.T) {

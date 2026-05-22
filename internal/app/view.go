@@ -71,6 +71,9 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	pathStr := m.rootDir
+	if fs.IsDriveListRoot(pathStr) {
+		pathStr = "This PC"
+	}
 	maxPathLen := m.width - 24
 	if maxPathLen < 10 {
 		maxPathLen = 10
@@ -138,6 +141,9 @@ func (m Model) renderParentCrumbs() string {
 	node := m.selectedNode()
 
 	if node == nil || node.Depth == 0 {
+		if fs.IsDriveListRoot(m.rootDir) {
+			return ui.StyleRootDir.Render("  This PC") + "\n"
+		}
 		cur := m.rootDir
 		for i := 0; i < maxDepth; i++ {
 			parent := fs.ParentDir(cur)

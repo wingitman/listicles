@@ -149,6 +149,39 @@ func TestGroupTextResults_MultipleFiles(t *testing.T) {
 	}
 }
 
+func TestParseTextMatchLine_WindowsDrivePath(t *testing.T) {
+	r, ok := parseTextMatchLine(`D:\Projects\listicles\main.go:23:func main() {`)
+	if !ok {
+		t.Fatal("expected Windows drive path to parse")
+	}
+	if r.Path != `D:\Projects\listicles\main.go` {
+		t.Fatalf("Path = %q, want Windows path", r.Path)
+	}
+	if r.LineNum != 23 {
+		t.Fatalf("LineNum = %d, want 23", r.LineNum)
+	}
+	if r.Line != "func main() {" {
+		t.Fatalf("Line = %q", r.Line)
+	}
+}
+
+func TestParseRgJSONLine_WindowsDrivePath(t *testing.T) {
+	raw := `{"type":"match","data":{"path":{"text":"D:\\Projects\\listicles\\main.go"},"lines":{"text":"func main() {\n"},"line_number":23}}`
+	r, ok := parseRgJSONLine(raw)
+	if !ok {
+		t.Fatal("expected rg JSON match to parse")
+	}
+	if r.Path != `D:\Projects\listicles\main.go` {
+		t.Fatalf("Path = %q, want Windows path", r.Path)
+	}
+	if r.LineNum != 23 {
+		t.Fatalf("LineNum = %d, want 23", r.LineNum)
+	}
+	if r.Line != "func main() {" {
+		t.Fatalf("Line = %q", r.Line)
+	}
+}
+
 // ─── DetectTools ─────────────────────────────────────────────────────────────
 
 func TestDetectTools_DoesNotPanic(t *testing.T) {

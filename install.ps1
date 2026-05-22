@@ -14,7 +14,8 @@
 #>
 
 param(
-    [switch]$Update
+    [switch]$Update,
+    [switch]$Default
 )
 
 Set-StrictMode -Version Latest
@@ -77,6 +78,26 @@ if (-not (Test-Path $InstallDir)) {
 }
 Copy-Item -Path $BinaryBuild -Destination $BinaryDest -Force
 Write-Ok "Installed: $BinaryDest"
+
+# ---------------------------------------------------------------------------
+# 3b. Ensure config exists / migrate missing settings only
+# ---------------------------------------------------------------------------
+Write-Step 'Checking config...'
+$ensureArgs = @('--ensure-config')
+if ($Default) {
+    $ensureArgs += '--default'
+    Write-Note 'Resetting config to defaults because -Default was specified.'
+}
+& $BinaryDest @ensureArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'ERROR: config check failed.' -ForegroundColor Red
+    exit 1
+}
+if ($Default) {
+    Write-Ok 'Config reset to defaults.'
+} else {
+    Write-Ok 'Config is present and any missing settings were added.'
+}
 
 # ---------------------------------------------------------------------------
 # 4. Add install dir to user PATH (persistent, no admin required)

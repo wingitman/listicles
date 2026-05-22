@@ -18,7 +18,17 @@ func main() {
 	recordUpdate := flag.Bool("record-update", false, "record installed update metadata and exit")
 	updateCommit := flag.String("update-commit", "", "commit to record with --record-update")
 	updateRepo := flag.String("update-repo", "", "repo path to record with --record-update")
+	ensureConfig := flag.Bool("ensure-config", false, "create or migrate missing config settings and exit")
+	defaultConfig := flag.Bool("default", false, "with --ensure-config, reset config to defaults")
 	flag.Parse()
+
+	if *ensureConfig {
+		if err := config.EnsureConfig(*defaultConfig); err != nil {
+			fmt.Fprintf(os.Stderr, "Error ensuring config: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *recordUpdate {
 		if err := config.RecordUpdateMetadata(*updateCommit, *updateRepo); err != nil {
