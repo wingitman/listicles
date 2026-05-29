@@ -14,7 +14,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss
 - A terminal with colour support
 - `bash`, `zsh`, `fish`, or `powershell (pwsh)`
 
-**Optional (faster search):** [`fd`](https://github.com/sharkdp/fd) and [`rg`](https://github.com/BurntSushi/ripgrep)
+**Optional plugins:** [`fd`](https://github.com/sharkdp/fd) for faster name search, [`rg`](https://github.com/BurntSushi/ripgrep) for content search, and [`zoxide`](https://github.com/ajeetdsouza/zoxide) for known-directory search.
 
 ---
 
@@ -127,16 +127,18 @@ Multi-digit jump: type digits within 500ms. The number being typed shows in the 
 | `.` | Toggle hidden files |
 | `i` | Cycle detail: none → count → size → full path |
 | `/` | Search (live filter as you type) |
-| `Enter` (in search) | Run full search via `fd`/`rg` |
+| `Enter` (in search) | Run full search via `fd`/`rg`, or navigate live `zoxide` results |
 | `Esc` (in search) | Cancel |
 | `U` | Show updates, recent changes, and install history commits |
+| `P` | Show plugins and toggle optional integrations |
 | `o` | Open config in `$EDITOR` |
 | `q` / `Esc` | Quit |
 
-**Search flags** (add to your query): `-r` recursive, `-t` search file contents (or `-rt` for both).
+**Search flags** (add to your query): `-r` recursive, `-t` search file contents (or `-rt` for both), `-z` live-search zoxide's known directories. When `-z` is present, `-r` and `-t` are ignored.
 Example: `main -rt` finds files containing the word `main`, recursively.
 Example: `.conf -r` find files/directories containing '.conf', recursively. 
 Example: `system32` find file/directories containing 'system32' in this directory
+Example: `proj -z` searches zoxide's directory database as you type.
 
 ---
 
@@ -184,6 +186,7 @@ details       = "i"
 toggle_hidden = "."
 search        = "/"
 show_updates  = "U"
+plugins       = "P"
 
 [display]
 show_hidden        = false
@@ -200,6 +203,11 @@ disable_checks = false  # true disables startup update checks
 current_commit = ""     # installed app commit, maintained by listicles
 repo_path = ""          # source checkout used for updates
 terminal = ""           # optional terminal command for detached updates
+
+[plugins]
+fd = true       # use fd for full name search when installed
+rg = true       # use rg for full content search when installed
+zoxide = true   # use zoxide for -z directory search when installed
 ```
 
 ## Updates

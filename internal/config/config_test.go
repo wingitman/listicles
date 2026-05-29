@@ -50,6 +50,7 @@ func TestDefault_FieldValues(t *testing.T) {
 		{"Bookmark", cfg.Keybinds.Bookmark, "b"},
 		{"ShowHints", cfg.Keybinds.ShowHints, "?"},
 		{"ShowUpdates", cfg.Keybinds.ShowUpdates, "U"},
+		{"Plugins", cfg.Keybinds.Plugins, "P"},
 		{"DefaultListMode", cfg.Display.DefaultListMode, "dirs_and_files"},
 	}
 	for _, c := range keybindChecks {
@@ -73,6 +74,9 @@ func TestDefault_FieldValues(t *testing.T) {
 	if cfg.Updates.DisableChecks || cfg.Updates.CurrentCommit != "" || cfg.Updates.RepoPath != "" || cfg.Updates.Terminal != "" {
 		t.Error("Updates should default to enabled checks with empty metadata")
 	}
+	if !cfg.Plugins.Fd || !cfg.Plugins.Rg || !cfg.Plugins.Zoxide {
+		t.Error("Plugins should default to enabled")
+	}
 }
 
 func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
@@ -89,7 +93,7 @@ func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 	}
 
 	// Check section headers are present.
-	for _, key := range []string{"[keybinds]", "[display]", "[apps]", "[updates]"} {
+	for _, key := range []string{"[keybinds]", "[display]", "[apps]", "[updates]", "[plugins]"} {
 		if !strings.Contains(string(content), key) {
 			t.Errorf("expected %q in default config output", key)
 		}
@@ -116,6 +120,11 @@ func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 	for _, key := range updateEntries {
 		if !fileContainsKey(string(content), key) {
 			t.Errorf("expected update key %q in default config output", key)
+		}
+	}
+	for _, key := range pluginEntries {
+		if !fileContainsKey(string(content), key) {
+			t.Errorf("expected plugin key %q in default config output", key)
 		}
 	}
 
@@ -264,6 +273,7 @@ func TestApplyKeybindDefaults_FillsMissing(t *testing.T) {
 		{"Bookmark", cfg.Keybinds.Bookmark, d.Bookmark},
 		{"ShowHints", cfg.Keybinds.ShowHints, d.ShowHints},
 		{"ShowUpdates", cfg.Keybinds.ShowUpdates, d.ShowUpdates},
+		{"Plugins", cfg.Keybinds.Plugins, d.Plugins},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -375,6 +385,9 @@ show_hidden = true
 	if !sectionContainsKey(updated, "display", "parent_depth") {
 		t.Fatalf("missing display key was not added:\n%s", updated)
 	}
+	if !sectionContainsKey(updated, "plugins", "zoxide") {
+		t.Fatalf("missing plugin key was not added:\n%s", updated)
+	}
 }
 
 func TestEnsureConfig_DefaultResetOverwritesUserValues(t *testing.T) {
@@ -431,6 +444,28 @@ repo_path = "old-repo"
 	}
 	if !strings.Contains(updated, `current_commit = "new"`) || !strings.Contains(updated, `repo_path = "new-repo"`) {
 		t.Fatalf("update metadata was not written:\n%s", updated)
+	}
+}
+
+func TestSetPluginEnabled_PersistsToggle(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", filepath.Join(t.TempDir(), "AppData", "Roaming"))
+	if err := EnsureConfig(false); err != nil {
+		t.Fatalf("EnsureConfig: %v", err)
+	}
+
+	if err := SetPluginEnabled("zoxide", false); err != nil {
+		t.Fatalf("SetPluginEnabled: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Plugins.Zoxide {
+		t.Fatal("zoxide plugin should be disabled after persisted toggle")
+	}
+	if !cfg.Plugins.Fd || !cfg.Plugins.Rg {
+		t.Fatal("other plugin defaults should remain enabled")
 	}
 }
 

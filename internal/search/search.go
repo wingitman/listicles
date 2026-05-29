@@ -1,5 +1,5 @@
-// Package search runs filesystem and content searches, preferring rg/fd when
-// available and falling back to POSIX find/grep.
+// Package search runs filesystem and content searches, preferring rg/fd/zoxide
+// when available and falling back to POSIX find/grep.
 package search
 
 import (
@@ -16,11 +16,12 @@ import (
 
 // Tools caches which fast tools are available.
 type Tools struct {
-	HasFd bool
-	HasRg bool
+	HasFd     bool
+	HasRg     bool
+	HasZoxide bool
 }
 
-// DetectTools checks for fd and rg on PATH once at startup.
+// DetectTools checks for optional search tools on PATH once at startup.
 func DetectTools() Tools {
 	t := Tools{}
 	if _, err := exec.LookPath("fd"); err == nil {
@@ -28,6 +29,9 @@ func DetectTools() Tools {
 	}
 	if _, err := exec.LookPath("rg"); err == nil {
 		t.HasRg = true
+	}
+	if _, err := exec.LookPath("zoxide"); err == nil {
+		t.HasZoxide = true
 	}
 	return t
 }
@@ -38,6 +42,7 @@ type Request struct {
 	Query     string // search term
 	Recursive bool   // -r flag: search subdirectories
 	TextMode  bool   // -t flag: search file contents instead of names
+	Zoxide    bool   // -z flag: search zoxide's known directory database
 	Hidden    bool   // include hidden files/dirs
 }
 
@@ -56,10 +61,34 @@ func Run(t Tools, req Request, emit func(Result)) error {
 		return nil
 	}
 
+	if req.Zoxide {
+		return runZoxideSearch(t, req, emit)
+	}
 	if req.TextMode {
 		return runTextSearch(t, req, emit)
 	}
 	return runNameSearch(t, req, emit)
+}
+
+// ─── Zoxide directory search ─────────────────────────────────────────────────
+
+func runZoxideSearch(t Tools, req Request, emit func(Result)) error {
+	if !t.HasZoxide {
+		return nil
+	}
+	args := append([]string{"query", "-l"}, strings.Fields(req.Query)...)
+	cmd := exec.Command("zoxide", args...)
+	return streamLines(cmd, req.Dir, func(line string) {
+		path := strings.TrimSpace(line)
+		if path == "" {
+			return
+		}
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			return
+		}
+		emit(Result{Path: path})
+	})
 }
 
 // ─── Name search ─────────────────────────────────────────────────────────────

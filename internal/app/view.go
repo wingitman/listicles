@@ -36,6 +36,11 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.renderStatusBar())
 		return b.String()
+	case ModePlugins:
+		b.WriteString(m.renderPluginsScreen())
+		b.WriteString("\n")
+		b.WriteString(m.renderStatusBar())
+		return b.String()
 	case ModeSearch:
 		if m.cfg.Display.ParentDepth > 0 {
 			crumbs := m.renderParentCrumbs()
@@ -103,6 +108,9 @@ func (m Model) renderHeader() string {
 	}
 	if m.mode == ModeUpdates || m.mode == ModeUpdatePrompt {
 		badges = append(badges, ui.StyleInputPrompt.Render("[updates]"))
+	}
+	if m.mode == ModePlugins {
+		badges = append(badges, ui.StyleInputPrompt.Render("[plugins]"))
 	}
 	if m.digitBuffer != "" {
 		badges = append(badges, ui.StyleNumber.Render("→ "+m.digitBuffer))
@@ -219,7 +227,7 @@ func (m Model) renderParentCrumbs() string {
 
 func (m Model) renderSearchBar() string {
 	raw := m.textInput.Value()
-	_, recursive, textMode := parseSearchFlags(raw)
+	_, recursive, textMode, zoxideMode := parseSearchFlags(raw)
 
 	flags := ""
 	if recursive {
@@ -228,11 +236,16 @@ func (m Model) renderSearchBar() string {
 	if textMode {
 		flags += ui.StyleSuccess.Render(" -t")
 	}
+	if zoxideMode {
+		flags += ui.StyleSuccess.Render(" -z")
+	}
 
 	toolBadge := ""
-	if textMode && m.searchTools.HasRg {
+	if zoxideMode && m.searchTools.HasZoxide {
+		toolBadge = ui.StyleMuted.Render(" [zoxide]")
+	} else if textMode && m.searchTools.HasRg {
 		toolBadge = ui.StyleMuted.Render(" [rg]")
-	} else if !textMode && m.searchTools.HasFd {
+	} else if !zoxideMode && !textMode && m.searchTools.HasFd {
 		toolBadge = ui.StyleMuted.Render(" [fd]")
 	}
 
@@ -265,12 +278,12 @@ func (m Model) renderSearchBar() string {
 	var hint string
 	if m.searchInputActive {
 		// Typing state: show how to run search.
-		hint = ui.StyleMuted.Render("  [Enter]Search  [-r]Recursive  [-t]Content  [-rt]Both  [Esc]Cancel")
+		hint = ui.StyleMuted.Render("  [Enter]Search  [-r]Recursive  [-t]Content  [-z]Zoxide dirs  [Esc]Cancel")
 	} else if len(m.searchLiveNodes) > 0 {
 		// Navigation state: show how to navigate and confirm.
 		hint = ui.StyleMuted.Render(fmt.Sprintf(
-			"  [Enter]Open  [%s/%s]Navigate  [Esc]Edit Query  [%s]Exit",
-			m.keys.up, m.keys.down, m.keys.quit,
+			"  [Enter]Open  [%s]Cd  [%s/%s]Navigate  [Esc]Edit Query  [%s]Exit",
+			m.keys.cdDir, m.keys.up, m.keys.down, m.keys.quit,
 		))
 	} else {
 		// Navigation state but no results: prompt to edit query.
@@ -297,15 +310,19 @@ func (m Model) renderSearchResultHeader() string {
 	modeStr := "names"
 	if m.searchTextMode {
 		modeStr = "content"
+	} else if m.searchZoxideMode {
+		modeStr = "zoxide dirs"
 	}
 	scopeStr := "current dir"
 	if m.searchRecursive {
 		scopeStr = "recursive"
 	}
 	toolStr := ""
-	if m.searchTextMode && m.searchTools.HasRg {
+	if m.searchZoxideMode && m.searchTools.HasZoxide {
+		toolStr = " via zoxide"
+	} else if m.searchTextMode && m.searchTools.HasRg {
 		toolStr = " via rg"
-	} else if !m.searchTextMode && m.searchTools.HasFd {
+	} else if !m.searchZoxideMode && !m.searchTextMode && m.searchTools.HasFd {
 		toolStr = " via fd"
 	}
 	return ui.StyleSuccess.Render(fmt.Sprintf("  %d result(s)", count)) +
@@ -787,6 +804,34 @@ func (m Model) renderUpdatesScreen() string {
 	return b.String()
 }
 
+func (m Model) renderPluginsScreen() string {
+	var b strings.Builder
+	b.WriteString(ui.StyleInputPrompt.Render("Plugins"))
+	b.WriteString("\n")
+	b.WriteString(ui.StyleMuted.Render("Optional command integrations used by search."))
+	b.WriteString("\n\n")
+
+	infos := m.pluginInfos()
+	for i, info := range infos {
+		status := ui.StyleSuccess.Render("active")
+		if !info.Enabled {
+			status = ui.StyleMuted.Render("disabled")
+		} else if !info.Installed {
+			status = ui.StyleError.Render("missing")
+		}
+		line := fmt.Sprintf("  %-8s %-10s %s", info.Name, status, ui.StyleMuted.Render(info.Description))
+		if i == m.pluginCursor {
+			lineWidth := lipgloss.Width(line)
+			if lineWidth < m.width {
+				line += strings.Repeat(" ", m.width-lineWidth)
+			}
+			line = ui.StyleSelected.Render(line)
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
+}
+
 // ─── Clipboard bar ────────────────────────────────────────────────────────────
 
 func (m Model) renderClipboardBar() string {
@@ -840,11 +885,11 @@ func (m Model) renderStatusBar() string {
 		if m.searchInputActive {
 			switch m.hintsMode {
 			case HintsNavigation:
-				return render(withMore([]string{"[-r]Recursive", "[-t]Contents", "[-rt]Both", "[Esc]Cancel"}))
+				return render(withMore([]string{"[-r]Recursive", "[-t]Contents", "[-z]Zoxide", "[Esc]Cancel"}))
 			case HintsActions:
 				return render(withMore([]string{"[Enter]Run full search", "[Esc]Cancel"}))
 			default:
-				return render(withMore([]string{"[Type]Filter", "[Enter]Run search", "[-r]Recursive", "[-t]Contents", "[Esc]Cancel"}))
+				return render(withMore([]string{"[Type]Filter", "[Enter]Run search", "[-r/-t/-z]Flags", "[Esc]Cancel"}))
 			}
 		}
 
@@ -852,9 +897,9 @@ func (m Model) renderStatusBar() string {
 		case HintsNavigation:
 			return render(withMore([]string{"[" + k.left + "]Collapse", "[" + k.right + "]Expand", "[Esc]Edit query", "[" + k.fullSearch + "]Rerun"}))
 		case HintsActions:
-			return render(withMore([]string{"[" + k.confirm + "]Edit/Open", "[Esc]Edit query", "[" + k.quit + "]Exit search"}))
+			return render(withMore([]string{"[" + k.confirm + "]Edit/Open", "[" + k.cdDir + "]Cd", "[Esc]Edit query", "[" + k.quit + "]Exit search"}))
 		default:
-			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Edit/Open", "[" + k.left + "/" + k.right + "]Collapse/Expand", "[Esc]Edit query", "[" + k.quit + "]Exit"}))
+			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Edit/Open", "[" + k.cdDir + "]Cd", "[" + k.left + "/" + k.right + "]Collapse/Expand", "[Esc]Edit query"}))
 		}
 	}
 
@@ -884,6 +929,10 @@ func (m Model) renderStatusBar() string {
 		return render(withMore([]string{"[↑/↓]Nav", "[Enter]Details", "[i]Install selected", "[y]Install latest", "[ctrl+f]Refresh", "[Esc]Back"}))
 	}
 
+	if m.mode == ModePlugins {
+		return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Toggle", "[Esc]Back"}))
+	}
+
 	// ── Normal mode ───────────────────────────────────────────────────────────
 
 	listLabel := "dirs"
@@ -893,7 +942,7 @@ func (m Model) renderStatusBar() string {
 
 	switch m.hintsMode {
 	case HintsNavigation:
-		return render(withMore([]string{"[" + k.pageUp + "/" + k.pageDown + "]Page", "[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot", "[" + k.searchKey + "]Search", "[" + k.showUpdates + "]Updates", "[" + k.toggleList + "]Files:" + listLabel, "[" + k.toggleHidden + "]Hidden"}))
+		return render(withMore([]string{"[" + k.pageUp + "/" + k.pageDown + "]Page", "[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot", "[" + k.searchKey + "]Search", "[" + k.plugins + "]Plugins", "[" + k.toggleList + "]Files:" + listLabel, "[" + k.showUpdates + "]Updates", "[" + k.toggleHidden + "]Hidden"}))
 	case HintsActions:
 		hints := []string{"[" + k.add + "]Add", "[" + k.delete + "]Delete", "[" + k.rename + "]Rename", "[" + k.yank + "/" + k.cut + "]Yank/Cut", "[" + k.paste + "]Paste"}
 		if m.clipboardPath == "" {

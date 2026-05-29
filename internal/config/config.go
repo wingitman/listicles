@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,7 @@ type Keybinds struct {
 	Bookmark         string `toml:"bookmark"`
 	ShowHints        string `toml:"show_hints"`
 	ShowUpdates      string `toml:"show_updates"`
+	Plugins          string `toml:"plugins"`
 }
 
 // Display holds display preferences.
@@ -69,12 +71,20 @@ type Updates struct {
 	Terminal      string `toml:"terminal"`
 }
 
+// Plugins controls optional external command integrations.
+type Plugins struct {
+	Fd     bool `toml:"fd"`
+	Rg     bool `toml:"rg"`
+	Zoxide bool `toml:"zoxide"`
+}
+
 // Config is the root config struct.
 type Config struct {
 	Keybinds Keybinds `toml:"keybinds"`
 	Display  Display  `toml:"display"`
 	Apps     Apps     `toml:"apps"`
 	Updates  Updates  `toml:"updates"`
+	Plugins  Plugins  `toml:"plugins"`
 }
 
 // keybindEntries is the single authoritative list of every keybind TOML key
@@ -115,6 +125,7 @@ var keybindEntries = []struct{ key, comment string }{
 	{"bookmark", "bookmark current selection"},
 	{"show_hints", "cycle hint display mode"},
 	{"show_updates", "show update history and installers"},
+	{"plugins", "show optional plugin integrations"},
 }
 
 // displayEntries is the authoritative list of every display TOML key, used for
@@ -138,6 +149,13 @@ var updateEntries = []string{
 	"current_commit",
 	"repo_path",
 	"terminal",
+}
+
+// pluginEntries is the authoritative list of every [plugins] TOML key.
+var pluginEntries = []string{
+	"fd",
+	"rg",
+	"zoxide",
 }
 
 // Default returns a Config with all default values.
@@ -177,6 +195,7 @@ func Default() *Config {
 			Bookmark:         "b",
 			ShowHints:        "?",
 			ShowUpdates:      "U",
+			Plugins:          "P",
 		},
 		Display: Display{
 			ShowHidden:       false,
@@ -193,6 +212,11 @@ func Default() *Config {
 			CurrentCommit: "",
 			RepoPath:      "",
 			Terminal:      "",
+		},
+		Plugins: Plugins{
+			Fd:     true,
+			Rg:     true,
+			Zoxide: true,
 		},
 	}
 }
@@ -363,6 +387,9 @@ func applyKeybindDefaults(cfg *Config) {
 	if cfg.Keybinds.ShowUpdates == "" {
 		cfg.Keybinds.ShowUpdates = d.ShowUpdates
 	}
+	if cfg.Keybinds.Plugins == "" {
+		cfg.Keybinds.Plugins = d.Plugins
+	}
 }
 
 // needsMigration returns true if the config file is missing any known keybind
@@ -390,6 +417,11 @@ func needsMigration(path string) bool {
 		}
 	}
 	for _, key := range updateEntries {
+		if !fileContainsKey(content, key) {
+			return true
+		}
+	}
+	for _, key := range pluginEntries {
 		if !fileContainsKey(content, key) {
 			return true
 		}
@@ -455,6 +487,7 @@ func ensureMissingConfigKeys(content string) string {
 	content = ensureSectionEntries(content, "display", displayDefaultLines())
 	content = ensureSectionEntries(content, "apps", appsDefaultLines())
 	content = ensureSectionEntries(content, "updates", updatesDefaultLines())
+	content = ensureSectionEntries(content, "plugins", pluginsDefaultLines())
 	return content
 }
 
@@ -572,6 +605,34 @@ func updatesDefaultLines() map[string]string {
 	}
 }
 
+func pluginsDefaultLines() map[string]string {
+	d := Default().Plugins
+	return map[string]string{
+		"fd":     "fd = " + boolStr(d.Fd),
+		"rg":     "rg = " + boolStr(d.Rg),
+		"zoxide": "zoxide = " + boolStr(d.Zoxide),
+	}
+}
+
+// SetPluginEnabled updates one plugin toggle in the user's config file.
+func SetPluginEnabled(name string, enabled bool) error {
+	switch name {
+	case "fd", "rg", "zoxide":
+	default:
+		return errors.New("unknown plugin")
+	}
+	if err := EnsureConfig(false); err != nil {
+		return err
+	}
+	path := ConfigPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := setSectionKey(string(data), "plugins", name, boolStr(enabled))
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
 // RecordUpdateMetadata stores the installed commit and source repo path without
 // changing user-facing preferences.
 func RecordUpdateMetadata(commit, repoPath string) error {
@@ -633,6 +694,7 @@ func buildTOML(cfg *Config) string {
 	d := cfg.Display
 	a := cfg.Apps
 	u := cfg.Updates
+	p := cfg.Plugins
 
 	// Find longest key name for column alignment.
 	maxLen := 0
@@ -669,7 +731,11 @@ func buildTOML(cfg *Config) string {
 		"disable_checks = " + boolStr(u.DisableChecks) + "   # true disables startup update checks\n" +
 		"current_commit = " + quote(u.CurrentCommit) + "   # installed app commit, maintained by listicles\n" +
 		"repo_path = " + quote(u.RepoPath) + "   # source checkout used for updates\n" +
-		"terminal = " + quote(u.Terminal) + "   # optional terminal command for detached updates\n"
+		"terminal = " + quote(u.Terminal) + "   # optional terminal command for detached updates\n\n" +
+		"[plugins]\n" +
+		"fd = " + boolStr(p.Fd) + "   # use fd for full name search when installed\n" +
+		"rg = " + boolStr(p.Rg) + "   # use rg for full content search when installed\n" +
+		"zoxide = " + boolStr(p.Zoxide) + "   # use zoxide for -z directory search when installed\n"
 
 	return out
 }
@@ -711,6 +777,7 @@ func keybindValues(k *Keybinds) map[string]string {
 		"bookmark":           k.Bookmark,
 		"show_hints":         k.ShowHints,
 		"show_updates":       k.ShowUpdates,
+		"plugins":            k.Plugins,
 	}
 }
 

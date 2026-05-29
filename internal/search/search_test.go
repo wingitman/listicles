@@ -190,7 +190,8 @@ func TestDetectTools_DoesNotPanic(t *testing.T) {
 	// Just verify the struct is populated without panicking
 	_ = tools.HasFd
 	_ = tools.HasRg
-	t.Logf("fd available: %v, rg available: %v", tools.HasFd, tools.HasRg)
+	_ = tools.HasZoxide
+	t.Logf("fd available: %v, rg available: %v, zoxide available: %v", tools.HasFd, tools.HasRg, tools.HasZoxide)
 }
 
 // ─── Run (name search, non-recursive) ────────────────────────────────────────

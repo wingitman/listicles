@@ -37,6 +37,7 @@ const (
 	ModeBookmarks         // bookmarks list
 	ModeUpdatePrompt      // startup update prompt
 	ModeUpdates           // update history/install screen
+	ModePlugins           // optional plugin integration toggles
 )
 
 type InputAction int
@@ -165,8 +166,10 @@ type Model struct {
 
 	// Search state
 	searchTools       search.Tools
+	installedTools    search.Tools
 	searchRecursive   bool
 	searchTextMode    bool
+	searchZoxideMode  bool
 	searchQuery       string
 	searchResults     []search.Result
 	searchRunning     bool
@@ -174,6 +177,7 @@ type Model struct {
 	prevNodes         []TreeNode
 	prevRootDir       string
 	searchLiveNodes   []TreeNode
+	searchRequestID   int
 
 	// Git state
 	gitRoot           string
@@ -188,6 +192,7 @@ type Model struct {
 	updateChecking bool
 	updateCursor   int
 	updateExpanded map[string]bool
+	pluginCursor   int
 
 	keys resolvedKeys
 }
@@ -228,6 +233,19 @@ type resolvedKeys struct {
 	bookmark         string
 	showHints        string
 	showUpdates      string
+	plugins          string
+}
+
+type pluginInfo struct {
+	Name        string
+	Key         string
+	Description string
+	Enabled     bool
+	Installed   bool
+}
+
+func (p pluginInfo) Active() bool {
+	return p.Enabled && p.Installed
 }
 
 func resolveKeys(k config.Keybinds) resolvedKeys {
@@ -265,6 +283,7 @@ func resolveKeys(k config.Keybinds) resolvedKeys {
 		bookmark:         k.Bookmark,
 		showHints:        k.ShowHints,
 		showUpdates:      k.ShowUpdates,
+		plugins:          k.Plugins,
 	}
 }
 
@@ -290,6 +309,7 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 		appState = &state.State{}
 	}
 
+	installedTools := search.DetectTools()
 	m := &Model{
 		cfg:               cfg,
 		cdFile:            cdFile,
@@ -299,7 +319,8 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 		showHidden:        cfg.Display.ShowHidden,
 		textInput:         ti,
 		keys:              resolveKeys(cfg.Keybinds),
-		searchTools:       search.DetectTools(),
+		searchTools:       toolsForConfig(installedTools, cfg),
+		installedTools:    installedTools,
 		gitRoot:           gitRoot,
 		gitignorePatterns: gitignorePatterns,
 		appState:          appState,
@@ -657,8 +678,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case searchResultMsg:
+		if msg.requestID != 0 && msg.requestID != m.searchRequestID {
+			return m, nil
+		}
 		m.searchRunning = false
 		m.searchResults = msg.results
+		if msg.zoxide {
+			m.searchRecursive = false
+			m.searchTextMode = false
+			m.searchZoxideMode = true
+		}
 		// Populate searchLiveNodes (not m.nodes) so mode stays ModeSearch.
 		if m.searchTextMode {
 			groups := search.GroupTextResults(msg.results)
@@ -827,6 +856,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// ── Plugins mode ─────────────────────────────────────────────────
+		if m.mode == ModePlugins {
+			switch {
+			case key == "esc" || matchKey(key, m.keys.quit):
+				m.mode = ModeNormal
+				return m, nil
+			case matchKey(key, m.keys.up):
+				m.pluginCursor--
+				m.clampPluginCursor()
+				return m, nil
+			case matchKey(key, m.keys.down):
+				m.pluginCursor++
+				m.clampPluginCursor()
+				return m, nil
+			case matchKey(key, m.keys.confirm):
+				if err := m.toggleSelectedPlugin(); err != nil {
+					m.errorMsg = fmt.Sprintf("Could not update plugin config: %v", err)
+					m.mode = ModeError
+					return m, nil
+				}
+				return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg {
+					return clearStatusMsg{}
+				})
+			}
+			return m, nil
+		}
+
 		// ── Search mode ───────────────────────────────────────────────────
 		//
 		// Two sub-states controlled by m.searchInputActive:
@@ -855,6 +911,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Feed all other keys to the text input for typing.
 					var cmd tea.Cmd
 					m.textInput, cmd = m.textInput.Update(msg)
+					_, _, _, zoxideMode := parseSearchFlags(m.textInput.Value())
+					if zoxideMode {
+						return m, tea.Batch(cmd, m.startLiveZoxideSearch())
+					}
 					m.applyLiveFilter()
 					return m, cmd
 				}
@@ -890,6 +950,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.clampSearchCursor()
 					m.adjustOffset()
 					return m, nil
+				case matchKey(key, m.keys.cdDir):
+					if len(m.searchLiveNodes) == 0 || m.cursor >= len(m.searchLiveNodes) {
+						return m, nil
+					}
+					e := m.searchLiveNodes[m.cursor].Entry
+					if e.IsDir() {
+						return m, m.exitWithDir(e.Path)
+					}
+					return m, m.exitWithDir(filepath.Dir(e.Path))
 				case matchKey(key, m.keys.right):
 					// Expand a text-search file node to show match snippets.
 					return m.confirmSearchSelection()
@@ -1064,6 +1133,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateChecking = true
 				return m, checkUpdatesCmd(m.cfg)
 			}
+			return m, nil
+		}
+
+		// Plugins.
+		if matchKey(key, m.keys.plugins) {
+			m.pluginCursor = 0
+			m.mode = ModePlugins
 			return m, nil
 		}
 
@@ -1432,6 +1508,9 @@ func (m Model) mouseMove(delta int) (tea.Model, tea.Cmd) {
 	case ModeUpdates:
 		m.updateCursor += delta
 		m.clampUpdateCursor()
+	case ModePlugins:
+		m.pluginCursor += delta
+		m.clampPluginCursor()
 	case ModeNormal:
 		m.cursor += delta
 		m.clampCursor()
@@ -1456,6 +1535,25 @@ func (m Model) mouseClickRow(y int) (tea.Model, tea.Cmd) {
 		}
 		m.updateCursor = idx
 		m.clampUpdateCursor()
+		return m, nil
+	}
+	if m.mode == ModePlugins {
+		idx = y - m.mouseListStartRow()
+		if idx < 0 || idx >= len(m.pluginInfos()) {
+			return m, nil
+		}
+		if idx == m.pluginCursor {
+			if err := m.toggleSelectedPlugin(); err != nil {
+				m.errorMsg = fmt.Sprintf("Could not update plugin config: %v", err)
+				m.mode = ModeError
+				return m, nil
+			}
+			return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg {
+				return clearStatusMsg{}
+			})
+		}
+		m.pluginCursor = idx
+		m.clampPluginCursor()
 		return m, nil
 	}
 	if idx < 0 || idx >= len(m.mouseNodes()) {
@@ -1491,6 +1589,8 @@ func (m Model) mouseListStartRow() int {
 		row += 2 // tab title + tab hint
 	case ModeUpdates:
 		row += 7 // title + metadata + spacer + section label
+	case ModePlugins:
+		row += 3 // title + description + spacer
 	default:
 		row += strings.Count(m.renderParentCrumbs(), "\n")
 	}
@@ -1504,6 +1604,15 @@ func (m Model) activateMouseSelection() (tea.Model, tea.Cmd) {
 	case ModeUpdates:
 		m.toggleSelectedUpdateDetails()
 		return m, nil
+	case ModePlugins:
+		if err := m.toggleSelectedPlugin(); err != nil {
+			m.errorMsg = fmt.Sprintf("Could not update plugin config: %v", err)
+			m.mode = ModeError
+			return m, nil
+		}
+		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg {
+			return clearStatusMsg{}
+		})
 	case ModeRecents, ModeBookmarks, ModeNormal:
 		return m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	}
@@ -1612,11 +1721,102 @@ func listModeFromConfig(cfg *config.Config) ListMode {
 	return ListDirsOnly
 }
 
+func toolsForConfig(tools search.Tools, cfg *config.Config) search.Tools {
+	if cfg == nil {
+		return tools
+	}
+	if !cfg.Plugins.Fd {
+		tools.HasFd = false
+	}
+	if !cfg.Plugins.Rg {
+		tools.HasRg = false
+	}
+	if !cfg.Plugins.Zoxide {
+		tools.HasZoxide = false
+	}
+	return tools
+}
+
+func (m Model) pluginInfos() []pluginInfo {
+	plugins := config.Default().Plugins
+	if m.cfg != nil {
+		plugins = m.cfg.Plugins
+	}
+	return []pluginInfo{
+		{
+			Name:        "fd",
+			Key:         "fd",
+			Description: "fast full name search",
+			Enabled:     plugins.Fd,
+			Installed:   m.installedTools.HasFd,
+		},
+		{
+			Name:        "rg",
+			Key:         "rg",
+			Description: "fast full content search",
+			Enabled:     plugins.Rg,
+			Installed:   m.installedTools.HasRg,
+		},
+		{
+			Name:        "zoxide",
+			Key:         "zoxide",
+			Description: "live -z known-directory search",
+			Enabled:     plugins.Zoxide,
+			Installed:   m.installedTools.HasZoxide,
+		},
+	}
+}
+
+func (m *Model) clampPluginCursor() {
+	n := len(m.pluginInfos())
+	if n == 0 {
+		m.pluginCursor = 0
+		return
+	}
+	if m.pluginCursor < 0 {
+		m.pluginCursor = 0
+	}
+	if m.pluginCursor >= n {
+		m.pluginCursor = n - 1
+	}
+}
+
+func (m *Model) toggleSelectedPlugin() error {
+	infos := m.pluginInfos()
+	if len(infos) == 0 || m.pluginCursor >= len(infos) {
+		return nil
+	}
+	info := infos[m.pluginCursor]
+	enabled := !info.Enabled
+	if err := config.SetPluginEnabled(info.Key, enabled); err != nil {
+		return err
+	}
+	if m.cfg != nil {
+		switch info.Key {
+		case "fd":
+			m.cfg.Plugins.Fd = enabled
+		case "rg":
+			m.cfg.Plugins.Rg = enabled
+		case "zoxide":
+			m.cfg.Plugins.Zoxide = enabled
+		}
+		m.searchTools = toolsForConfig(m.installedTools, m.cfg)
+	}
+	state := "disabled"
+	if enabled {
+		state = "enabled"
+	}
+	m.statusMsg = info.Name + " " + state
+	return nil
+}
+
 func (m *Model) applyConfig(cfg *config.Config) error {
 	m.cfg = cfg
 	m.keys = resolveKeys(cfg.Keybinds)
 	m.showHidden = cfg.Display.ShowHidden
 	m.listMode = listModeFromConfig(cfg)
+	m.installedTools = search.DetectTools()
+	m.searchTools = toolsForConfig(m.installedTools, cfg)
 	return m.rebuildTree()
 }
 
@@ -1981,41 +2181,57 @@ func (m Model) openSearchInput() (tea.Model, tea.Cmd) {
 	m.prevRootDir = m.rootDir
 	m.searchRecursive = false
 	m.searchTextMode = false
+	m.searchZoxideMode = false
 	m.searchQuery = ""
 	m.searchLiveNodes = nil
 	m.searchRunning = false
 	m.searchInputActive = true
 	m.textInput.Reset()
-	m.textInput.Placeholder = "query  (-r recursive  -t text-in-files  -rt both)"
+	m.textInput.Placeholder = "query  (-r recursive  -t text  -z zoxide)"
 	m.textInput.SetValue("")
 	m.textInput.Focus()
 	m.mode = ModeSearch
 	return m, textinput.Blink
 }
 
-func parseSearchFlags(raw string) (query string, recursive bool, textMode bool) {
+func parseSearchFlags(raw string) (query string, recursive bool, textMode bool, zoxideMode bool) {
 	parts := strings.Fields(raw)
 	var keep []string
 	for _, p := range parts {
-		switch p {
-		case "-r":
-			recursive = true
-		case "-t":
-			textMode = true
-		case "-rt", "-tr":
-			recursive = true
-			textMode = true
-		default:
-			keep = append(keep, p)
+		if len(p) > 1 && strings.HasPrefix(p, "-") {
+			allFlags := true
+			for _, r := range p[1:] {
+				switch r {
+				case 'r':
+					recursive = true
+				case 't':
+					textMode = true
+				case 'z':
+					zoxideMode = true
+				default:
+					allFlags = false
+				}
+			}
+			if allFlags {
+				continue
+			}
 		}
+		keep = append(keep, p)
+	}
+	if zoxideMode {
+		recursive = false
+		textMode = false
 	}
 	query = strings.Join(keep, " ")
 	return
 }
 
 func (m *Model) applyLiveFilter() {
+	m.searchRequestID++
+	m.searchZoxideMode = false
+	m.searchRunning = false
 	raw := m.textInput.Value()
-	query, _, _ := parseSearchFlags(raw)
+	query, _, _, _ := parseSearchFlags(raw)
 	query = strings.TrimSpace(query)
 	if query == "" {
 		m.searchLiveNodes = nil
@@ -2040,6 +2256,45 @@ func (m *Model) applyLiveFilter() {
 	m.searchLiveNodes = filtered
 	m.cursor = 0
 	m.offset = 0
+}
+
+func (m *Model) startLiveZoxideSearch() tea.Cmd {
+	raw := m.textInput.Value()
+	query, _, _, zoxideMode := parseSearchFlags(raw)
+	query = strings.TrimSpace(query)
+	if !zoxideMode {
+		m.applyLiveFilter()
+		return nil
+	}
+	m.searchZoxideMode = true
+	m.searchRecursive = false
+	m.searchTextMode = false
+	m.searchQuery = query
+	if query == "" || !m.searchTools.HasZoxide {
+		m.searchRequestID++
+		m.searchRunning = false
+		m.searchLiveNodes = nil
+		m.cursor = 0
+		m.offset = 0
+		return nil
+	}
+	m.searchRequestID++
+	requestID := m.searchRequestID
+	m.searchRunning = true
+	req := search.Request{
+		Dir:    m.prevRootDir,
+		Query:  query,
+		Zoxide: true,
+		Hidden: m.showHidden,
+	}
+	tools := m.searchTools
+	return func() tea.Msg {
+		var results []search.Result
+		_ = search.Run(tools, req, func(r search.Result) {
+			results = append(results, r)
+		})
+		return searchResultMsg{results: results, requestID: requestID, zoxide: true}
+	}
 }
 
 // confirmSearchSelection confirms the currently highlighted search result.
@@ -2191,15 +2446,16 @@ func (m *Model) clampSearchCursor() {
 // The text input is blurred so the user can navigate results with arrow keys.
 func (m Model) runFullSearch() (tea.Model, tea.Cmd) {
 	raw := m.textInput.Value()
-	query, recursive, textMode := parseSearchFlags(raw)
+	query, recursive, textMode, zoxideMode := parseSearchFlags(raw)
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return m, nil
 	}
-	if fs.IsDriveListRoot(m.prevRootDir) {
+	if fs.IsDriveListRoot(m.prevRootDir) && !zoxideMode {
 		m.searchQuery = query
 		m.searchRecursive = recursive
 		m.searchTextMode = textMode
+		m.searchZoxideMode = false
 		m.searchRunning = false
 		m.searchInputActive = false
 		m.textInput.Blur()
@@ -2209,15 +2465,19 @@ func (m Model) runFullSearch() (tea.Model, tea.Cmd) {
 	m.searchQuery = query
 	m.searchRecursive = recursive
 	m.searchTextMode = textMode
+	m.searchZoxideMode = zoxideMode
 	m.searchRunning = true
 	m.searchInputActive = false // switch to navigation state
 	m.textInput.Blur()
 	m.searchLiveNodes = nil
+	m.searchRequestID++
+	requestID := m.searchRequestID
 	req := search.Request{
 		Dir:       m.prevRootDir,
 		Query:     query,
 		Recursive: recursive,
 		TextMode:  textMode,
+		Zoxide:    zoxideMode,
 		Hidden:    m.showHidden,
 	}
 	tools := m.searchTools
@@ -2226,7 +2486,7 @@ func (m Model) runFullSearch() (tea.Model, tea.Cmd) {
 		_ = search.Run(tools, req, func(r search.Result) {
 			results = append(results, r)
 		})
-		return searchResultMsg{results: results}
+		return searchResultMsg{results: results, requestID: requestID, zoxide: zoxideMode}
 	}
 }
 
@@ -2386,7 +2646,11 @@ func (m *Model) clampCursorSkipHeaders() {
 type errorMsg string
 type reloadMsg struct{ reloadPath string }
 type reloadConfigMsg struct{}
-type searchResultMsg struct{ results []search.Result }
+type searchResultMsg struct {
+	results   []search.Result
+	requestID int
+	zoxide    bool
+}
 type digitTimeoutMsg struct{}
 type clearStatusMsg struct{}
 type updateCheckMsg struct{ info appupdate.Info }

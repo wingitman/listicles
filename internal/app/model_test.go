@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/wingitman/listicles/internal/config"
 	"github.com/wingitman/listicles/internal/fs"
+	"github.com/wingitman/listicles/internal/search"
 	appupdate "github.com/wingitman/listicles/internal/update"
 )
 
@@ -600,6 +601,41 @@ func TestApplyLiveFilter_StripsFlagsFromQuery(t *testing.T) {
 	}
 }
 
+func TestStartLiveZoxideSearch_DisabledClearsResults(t *testing.T) {
+	m, _ := newModelWithDirs(t, "alpha")
+	m.prevRootDir = m.rootDir
+	m.searchTools.HasZoxide = false
+	m.searchLiveNodes = []TreeNode{{Entry: fs.Entry{Name: "old", Path: "/old", Type: fs.EntryDir}}}
+	m.textInput.SetValue("-z alpha")
+
+	cmd := m.startLiveZoxideSearch()
+	if cmd != nil {
+		t.Fatal("disabled zoxide should not launch a search command")
+	}
+	if m.searchLiveNodes != nil {
+		t.Fatal("disabled zoxide search should clear stale results")
+	}
+	if m.searchRunning {
+		t.Fatal("disabled zoxide search should not remain running")
+	}
+}
+
+func TestUpdate_StaleZoxideSearchResultIgnored(t *testing.T) {
+	m, _ := newModelWithDirs(t, "alpha")
+	m.mode = ModeSearch
+	m.searchRequestID = 2
+
+	updated, _ := m.Update(searchResultMsg{
+		requestID: 1,
+		zoxide:    true,
+		results:   []search.Result{{Path: m.rootDir}},
+	})
+	m2 := updated.(Model)
+	if len(m2.searchLiveNodes) != 0 {
+		t.Fatal("stale zoxide results should not replace current results")
+	}
+}
+
 func TestConfirmSearchSelection_DirectoryResultExpandsUnfiltered(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "scrimmy")
@@ -906,6 +942,38 @@ func TestUpdate_ShowUpdatesKeyOpensUpdatesMode(t *testing.T) {
 
 	if m2.mode != ModeUpdates {
 		t.Fatalf("mode = %v, want ModeUpdates", m2.mode)
+	}
+}
+
+func TestUpdate_PluginsKeyOpensPluginsMode(t *testing.T) {
+	m, _ := newModelWithDirs(t, "a")
+	m2 := sendKey(m, "P")
+
+	if m2.mode != ModePlugins {
+		t.Fatalf("mode = %v, want ModePlugins", m2.mode)
+	}
+}
+
+func TestToggleSelectedPlugin_PersistsConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", filepath.Join(t.TempDir(), "AppData", "Roaming"))
+	m, _ := newModelWithDirs(t, "a")
+	m.installedTools.HasZoxide = true
+	m.searchTools = toolsForConfig(m.installedTools, m.cfg)
+	m.pluginCursor = 2
+
+	if err := m.toggleSelectedPlugin(); err != nil {
+		t.Fatalf("toggleSelectedPlugin: %v", err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Plugins.Zoxide {
+		t.Fatal("zoxide plugin should be disabled in persisted config")
+	}
+	if m.searchTools.HasZoxide {
+		t.Fatal("zoxide should no longer be active after disabling")
 	}
 }
 
@@ -1278,50 +1346,57 @@ func TestUpdate_ConfirmPasteMove_MovesFile(t *testing.T) {
 // ─── parseSearchFlags (in app package) ───────────────────────────────────────
 
 func TestParseSearchFlags_NoFlags(t *testing.T) {
-	q, r, txt := parseSearchFlags("foo bar")
-	if q != "foo bar" || r || txt {
-		t.Errorf("got q=%q r=%v txt=%v", q, r, txt)
+	q, r, txt, z := parseSearchFlags("foo bar")
+	if q != "foo bar" || r || txt || z {
+		t.Errorf("got q=%q r=%v txt=%v z=%v", q, r, txt, z)
 	}
 }
 
 func TestParseSearchFlags_RecursiveFlag(t *testing.T) {
-	q, r, _ := parseSearchFlags("foo -r")
+	q, r, _, _ := parseSearchFlags("foo -r")
 	if q != "foo" || !r {
 		t.Errorf("got q=%q r=%v", q, r)
 	}
 }
 
 func TestParseSearchFlags_TextFlag(t *testing.T) {
-	q, _, txt := parseSearchFlags("-t foo")
+	q, _, txt, _ := parseSearchFlags("-t foo")
 	if q != "foo" || !txt {
 		t.Errorf("got q=%q txt=%v", q, txt)
 	}
 }
 
 func TestParseSearchFlags_CombinedRT(t *testing.T) {
-	q, r, txt := parseSearchFlags("foo -rt")
+	q, r, txt, _ := parseSearchFlags("foo -rt")
 	if q != "foo" || !r || !txt {
 		t.Errorf("got q=%q r=%v txt=%v", q, r, txt)
 	}
 }
 
 func TestParseSearchFlags_CombinedTR(t *testing.T) {
-	q, r, txt := parseSearchFlags("foo -tr")
+	q, r, txt, _ := parseSearchFlags("foo -tr")
 	if q != "foo" || !r || !txt {
 		t.Errorf("got q=%q r=%v txt=%v", q, r, txt)
 	}
 }
 
 func TestParseSearchFlags_SeparateRandT(t *testing.T) {
-	q, r, txt := parseSearchFlags("foo -r -t")
+	q, r, txt, _ := parseSearchFlags("foo -r -t")
 	if q != "foo" || !r || !txt {
 		t.Errorf("got q=%q r=%v txt=%v", q, r, txt)
 	}
 }
 
 func TestParseSearchFlags_FlagInMiddle(t *testing.T) {
-	q, r, txt := parseSearchFlags("hello -r world")
+	q, r, txt, _ := parseSearchFlags("hello -r world")
 	if q != "hello world" || !r || txt {
 		t.Errorf("got q=%q r=%v txt=%v", q, r, txt)
+	}
+}
+
+func TestParseSearchFlags_ZoxideIgnoresRecursiveAndText(t *testing.T) {
+	q, r, txt, z := parseSearchFlags("project -rtz")
+	if q != "project" || r || txt || !z {
+		t.Errorf("got q=%q r=%v txt=%v z=%v", q, r, txt, z)
 	}
 }

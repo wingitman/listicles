@@ -321,7 +321,7 @@ func TestRenderStatusBar_SearchModeIsContextual(t *testing.T) {
 	m.searchInputActive = true
 	out := plain(m.renderStatusBar())
 
-	for _, hint := range []string{"[Type]Filter", "[Enter]Run search", "[-r]Recursive", "[-t]Contents", "[Esc]Cancel", "[?/o] More hints/config"} {
+	for _, hint := range []string{"[Type]Filter", "[Enter]Run search", "[-r/-t/-z]Flags", "[Esc]Cancel", "[?/o] More hints/config"} {
 		if !strings.Contains(out, hint) {
 			t.Errorf("search hints missing %q\nfull bar: %s", hint, out)
 		}
@@ -337,7 +337,7 @@ func TestRenderStatusBar_SearchModeIsContextual(t *testing.T) {
 }
 
 func TestRenderStatusBar_AllContextRowsAtMostSixHints(t *testing.T) {
-	for _, mode := range []Mode{ModeNormal, ModeSearch, ModeRecents, ModeBookmarks} {
+	for _, mode := range []Mode{ModeNormal, ModeSearch, ModeRecents, ModeBookmarks, ModePlugins} {
 		for _, hintsMode := range []HintsMode{HintsFull, HintsNavigation, HintsActions} {
 			m := newViewModel(nil)
 			m.width = 500
@@ -494,6 +494,9 @@ func TestRenderSearchBar_ShowsHints(t *testing.T) {
 	if !strings.Contains(out, "-t") {
 		t.Errorf("search bar should mention -t flag, got:\n%s", out)
 	}
+	if !strings.Contains(out, "-z") {
+		t.Errorf("search bar should mention -z flag, got:\n%s", out)
+	}
 }
 
 func TestRenderSearchBar_ShowsLiveMatchCount(t *testing.T) {
@@ -517,6 +520,33 @@ func TestRenderSearchBar_ShowsToolBadge_Fd(t *testing.T) {
 	out := m.renderSearchBar()
 	if !strings.Contains(out, "[fd]") {
 		t.Errorf("search bar should show [fd] when fd is available, got:\n%s", out)
+	}
+}
+
+func TestRenderSearchBar_ShowsToolBadge_Zoxide(t *testing.T) {
+	m := newViewModel(nil)
+	m.mode = ModeSearch
+	m.searchTools.HasZoxide = true
+	m.textInput.SetValue("-z proj")
+	out := m.renderSearchBar()
+	if !strings.Contains(out, "[zoxide]") {
+		t.Errorf("search bar should show [zoxide] when zoxide is active, got:\n%s", out)
+	}
+}
+
+func TestRenderPluginsScreen_ShowsPluginStatuses(t *testing.T) {
+	cfg := config.Default()
+	m := newViewModel(cfg)
+	m.installedTools.HasFd = true
+	m.installedTools.HasRg = false
+	m.installedTools.HasZoxide = true
+	m.cfg.Plugins.Zoxide = false
+	out := plain(m.renderPluginsScreen())
+
+	for _, want := range []string{"fd", "active", "rg", "missing", "zoxide", "disabled"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plugins screen missing %q\nfull screen: %s", want, out)
+		}
 	}
 }
 
