@@ -563,7 +563,7 @@ func (m *Model) exitWithFileAt(path string, lineNum int) tea.Cmd {
 	if m.openFile != "" {
 		openTarget := path
 		if lineNum > 0 {
-			openTarget = fmt.Sprintf("%s:%d", path, lineNum)
+			openTarget = fmt.Sprintf("%s\n%d\n", path, lineNum)
 		}
 		_ = os.WriteFile(m.openFile, []byte(openTarget), 0600)
 	}
@@ -2066,7 +2066,11 @@ func (m Model) confirmSearchSelection() (tea.Model, tea.Cmd) {
 		if node.Expanded {
 			m.collapseSearchNode(m.cursor)
 		} else {
-			m.expandSearchNode(m.cursor)
+			if err := m.expandSearchNode(m.cursor); err != nil {
+				m.errorMsg = err.Error()
+				m.mode = ModeError
+				return m, nil
+			}
 			// Move cursor into first child.
 			if m.cursor+1 < len(m.searchLiveNodes) && m.searchLiveNodes[m.cursor+1].Depth > node.Depth {
 				m.cursor++
@@ -2081,7 +2085,11 @@ func (m Model) confirmSearchSelection() (tea.Model, tea.Cmd) {
 		if node.Expanded {
 			m.collapseSearchNode(m.cursor)
 		} else {
-			m.expandSearchNode(m.cursor)
+			if err := m.expandSearchNode(m.cursor); err != nil {
+				m.errorMsg = err.Error()
+				m.mode = ModeError
+				return m, nil
+			}
 			if m.cursor+1 < len(m.searchLiveNodes) && m.searchLiveNodes[m.cursor+1].Depth > node.Depth {
 				m.cursor++
 				m.adjustOffset()
@@ -2097,21 +2105,37 @@ func (m Model) confirmSearchSelection() (tea.Model, tea.Cmd) {
 	return m, m.openEditor(e.Path)
 }
 
-// expandSearchNode inserts the PendingChildren of node at idx into
-// m.searchLiveNodes directly after idx, at depth+1.
-func (m *Model) expandSearchNode(idx int) {
+// expandSearchNode inserts children of node at idx into m.searchLiveNodes
+// directly after idx, at depth+1. Text-search file parents use their
+// pre-built match children; directory results are scanned normally so opening
+// a non-recursive search match continues as regular, unfiltered navigation.
+func (m *Model) expandSearchNode(idx int) error {
 	if idx < 0 || idx >= len(m.searchLiveNodes) {
-		return
+		return nil
 	}
 	node := m.searchLiveNodes[idx]
-	if node.Expanded || len(node.PendingChildren) == 0 {
-		return
+	if node.Expanded {
+		return nil
 	}
 	childDepth := node.Depth + 1
-	children := make([]TreeNode, len(node.PendingChildren))
-	for i, c := range node.PendingChildren {
-		children[i] = c
-		children[i].Depth = childDepth
+	children := []TreeNode{}
+	if len(node.PendingChildren) > 0 {
+		children = make([]TreeNode, len(node.PendingChildren))
+		for i, c := range node.PendingChildren {
+			children[i] = c
+			children[i].Depth = childDepth
+		}
+	} else if node.Entry.IsDir() {
+		entries, err := fs.ScanDir(node.Entry.Path, m.showHidden, m.listMode == ListDirsAndFiles, m.gitignorePatterns)
+		if err != nil {
+			return err
+		}
+		children = make([]TreeNode, len(entries))
+		for i, e := range entries {
+			children[i] = TreeNode{Entry: e, Depth: childDepth}
+		}
+	} else {
+		return nil
 	}
 	after := make([]TreeNode, 0, len(m.searchLiveNodes)+len(children))
 	after = append(after, m.searchLiveNodes[:idx+1]...)
@@ -2119,6 +2143,7 @@ func (m *Model) expandSearchNode(idx int) {
 	after = append(after, m.searchLiveNodes[idx+1:]...)
 	m.searchLiveNodes = after
 	m.searchLiveNodes[idx].Expanded = true
+	return nil
 }
 
 // collapseSearchNode removes children of node at idx from m.searchLiveNodes.

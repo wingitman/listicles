@@ -109,7 +109,12 @@ func TestNew_EmptyDir(t *testing.T) {
 
 func TestNew_FilesOnlyDir_DirsMode(t *testing.T) {
 	_, root := newModelWithDirsAndFiles(t, nil, []string{"a.txt", "b.txt"})
-	fm := newModel(t, root) // default is dirs-only
+	cfg := config.Default()
+	cfg.Display.DefaultListMode = "dirs"
+	fm, err := New(cfg, root, "", "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	if len(fm.nodes) != 0 {
 		t.Errorf("expected 0 nodes in files-only dir (dirs mode), got %d", len(fm.nodes))
 	}
@@ -595,6 +600,78 @@ func TestApplyLiveFilter_StripsFlagsFromQuery(t *testing.T) {
 	}
 }
 
+func TestConfirmSearchSelection_DirectoryResultExpandsUnfiltered(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "scrimmy")
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatalf("mkdir scrimmy: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "alpha"), 0755); err != nil {
+		t.Fatalf("mkdir alpha: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("content"), 0644); err != nil {
+		t.Fatalf("create notes.txt: %v", err)
+	}
+
+	m := newModel(t, root)
+	m.mode = ModeSearch
+	m.searchInputActive = false
+	m.searchQuery = "scrimm"
+	m.searchRecursive = false
+	m.prevRootDir = root
+	m.searchLiveNodes = []TreeNode{{
+		Entry: fs.Entry{Name: "scrimmy", Path: dir, Type: fs.EntryDir},
+	}}
+
+	updated, cmd := m.confirmSearchSelection()
+	if cmd != nil {
+		t.Fatal("directory search result should expand in-place without command")
+	}
+	m2 := updated.(Model)
+	if len(m2.searchLiveNodes) != 3 {
+		t.Fatalf("expected directory plus two unfiltered children, got %d", len(m2.searchLiveNodes))
+	}
+	if !m2.searchLiveNodes[0].Expanded {
+		t.Fatal("directory result should be marked expanded")
+	}
+	if m2.cursor != 1 {
+		t.Fatalf("cursor = %d, want first child index 1", m2.cursor)
+	}
+	if got := m2.searchLiveNodes[1].Entry.Name; got != "alpha" {
+		t.Fatalf("first child = %q, want alpha", got)
+	}
+	if got := m2.searchLiveNodes[2].Entry.Name; got != "notes.txt" {
+		t.Fatalf("second child = %q, want notes.txt", got)
+	}
+}
+
+func TestUpdate_SearchNavigationRightExpandsDirectoryResult(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "scrimmy")
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatalf("mkdir scrimmy: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "child"), 0755); err != nil {
+		t.Fatalf("mkdir child: %v", err)
+	}
+
+	m := newModel(t, root)
+	m.mode = ModeSearch
+	m.searchInputActive = false
+	m.prevRootDir = root
+	m.searchLiveNodes = []TreeNode{{
+		Entry: fs.Entry{Name: "scrimmy", Path: dir, Type: fs.EntryDir},
+	}}
+
+	m2 := sendSpecialKey(m, tea.KeyRight)
+	if len(m2.searchLiveNodes) != 2 {
+		t.Fatalf("expected directory plus child, got %d", len(m2.searchLiveNodes))
+	}
+	if got := m2.searchLiveNodes[1].Entry.Name; got != "child" {
+		t.Fatalf("child = %q, want child", got)
+	}
+}
+
 // ─── rebuildTree ─────────────────────────────────────────────────────────────
 
 func TestRebuildTree_PreservesExpansion(t *testing.T) {
@@ -737,18 +814,18 @@ func TestUpdate_JumpBottom(t *testing.T) {
 
 func TestUpdate_ToggleList(t *testing.T) {
 	m, _ := newModelWithDirs(t, "a")
-	if m.listMode != ListDirsOnly {
-		t.Fatal("initial listMode should be ListDirsOnly")
+	if m.listMode != ListDirsAndFiles {
+		t.Fatal("initial listMode should be ListDirsAndFiles")
 	}
 
 	m2 := sendKey(m, "f")
-	if m2.listMode != ListDirsAndFiles {
-		t.Error("after f: should be ListDirsAndFiles")
+	if m2.listMode != ListDirsOnly {
+		t.Error("after f: should be ListDirsOnly")
 	}
 
 	m3 := sendKey(m2, "f")
-	if m3.listMode != ListDirsOnly {
-		t.Error("after second f: should be ListDirsOnly")
+	if m3.listMode != ListDirsAndFiles {
+		t.Error("after second f: should be ListDirsAndFiles")
 	}
 }
 
@@ -952,7 +1029,7 @@ func TestConfirmSearchSelection_TextMatchWritesOpenFileWithLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read open target: %v", err)
 	}
-	want := path + ":2"
+	want := path + "\n2\n"
 	if string(target) != want {
 		t.Fatalf("open target = %q, want %q", string(target), want)
 	}
@@ -1068,17 +1145,20 @@ func TestUpdate_Paste_NoClipboard_NoOp(t *testing.T) {
 	}
 }
 
-func TestUpdate_Paste_WithClipboard_OpensConfirm(t *testing.T) {
+func TestUpdate_Paste_WithClipboard_OpensInput(t *testing.T) {
 	m, _ := newModelWithDirs(t, "src", "dst")
 	m.clipboardPath = "/some/path/file.txt"
 	m.clipboardOp = ClipCopy
 
 	m2 := sendKey(m, "p")
-	if m2.mode != ModeConfirm {
-		t.Errorf("paste with clipboard should open confirm, got %v", m2.mode)
+	if m2.mode != ModeInput {
+		t.Errorf("paste with clipboard should open input, got %v", m2.mode)
 	}
-	if m2.confirmAction != ConfirmPasteCopy {
-		t.Errorf("confirmAction = %v, want ConfirmPasteCopy", m2.confirmAction)
+	if m2.inputAction != InputPasteCopy {
+		t.Errorf("inputAction = %v, want InputPasteCopy", m2.inputAction)
+	}
+	if m2.textInput.Value() != "file.txt" {
+		t.Errorf("textInput = %q, want file.txt", m2.textInput.Value())
 	}
 }
 
@@ -1150,6 +1230,7 @@ func TestUpdate_ConfirmPasteCopy_CopiesFile(t *testing.T) {
 	m.confirmAction = ConfirmPasteCopy
 	m.pendingPath = filepath.Join(srcDir, "file.txt")
 	m.pendingDestDir = dstDir
+	m.pendingName = "file.txt"
 
 	sendKey(m, "y")
 
@@ -1176,6 +1257,7 @@ func TestUpdate_ConfirmPasteMove_MovesFile(t *testing.T) {
 	m.confirmAction = ConfirmPasteMove
 	m.pendingPath = filepath.Join(srcDir, "file.txt")
 	m.pendingDestDir = dstDir
+	m.pendingName = "file.txt"
 
 	m2 := sendKey(m, "y")
 
