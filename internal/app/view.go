@@ -2,11 +2,20 @@ package app
 
 import (
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/mosaic"
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
+	_ "golang.org/x/image/webp"
 	"github.com/wingitman/listicles/internal/fs"
 	"github.com/wingitman/listicles/internal/state"
 	"github.com/wingitman/listicles/internal/ui"
@@ -24,13 +33,8 @@ func (m Model) View() string {
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n")
 
+	// Full-screen modes bypass the split layout entirely.
 	switch m.mode {
-	case ModeRecents:
-		b.WriteString(m.renderRecentsHeader())
-		b.WriteString("\n")
-	case ModeBookmarks:
-		b.WriteString(m.renderBookmarksHeader())
-		b.WriteString("\n")
 	case ModeUpdates:
 		b.WriteString(m.renderUpdatesScreen())
 		b.WriteString("\n")
@@ -41,27 +45,65 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.renderStatusBar())
 		return b.String()
+	}
+
+	// Build the list column content (crumbs/mode header + node list + overlay).
+	var listBuf strings.Builder
+	switch m.mode {
+	case ModeRecents:
+		listBuf.WriteString(m.renderRecentsHeader())
+		listBuf.WriteString("\n")
+	case ModeBookmarks:
+		listBuf.WriteString(m.renderBookmarksHeader())
+		listBuf.WriteString("\n")
 	case ModeSearch:
 		if m.cfg.Display.ParentDepth > 0 {
 			crumbs := m.renderParentCrumbs()
 			if crumbs != "" {
-				b.WriteString(crumbs)
+				listBuf.WriteString(crumbs)
 			}
 		}
-		b.WriteString(m.renderSearchBar())
-		b.WriteString("\n")
+		listBuf.WriteString(m.renderSearchBar())
+		listBuf.WriteString("\n")
 	default:
 		crumbs := m.renderParentCrumbs()
 		if crumbs != "" {
-			b.WriteString(crumbs)
+			listBuf.WriteString(crumbs)
 		}
 	}
 
-	b.WriteString(m.renderNodes())
-	b.WriteString("\n")
-	b.WriteString(m.renderOverlay())
+	listBuf.WriteString(m.renderNodes())
+	listBuf.WriteString("\n")
+	listBuf.WriteString(m.renderOverlay())
 
-	// Clipboard indicator line (above status bar)
+	// ── Split layout when the preview panel is open ───────────────────────────
+	previewWidth := m.previewPanelWidth()
+	if previewWidth > 0 {
+		// Height of the "inner" area between the header line and the footer.
+		innerHeight := m.height - 2 // header row + the blank line we just wrote
+		innerHeight--               // status bar
+		if m.clipboardPath != "" {
+			innerHeight--
+		}
+		if innerHeight < 1 {
+			innerHeight = 1
+		}
+
+		listWidth := m.listColumnWidth()
+		listContent := strings.TrimRight(listBuf.String(), "\n")
+		listStr := lipgloss.NewStyle().
+			Width(listWidth).
+			Height(innerHeight).
+			Render(listContent)
+
+		previewStr := m.renderPreviewPanel(previewWidth, innerHeight)
+
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listStr, previewStr))
+	} else {
+		b.WriteString(listBuf.String())
+	}
+
+	// Clipboard indicator line (above status bar).
 	if m.clipboardPath != "" {
 		b.WriteString(m.renderClipboardBar())
 		b.WriteString("\n")
@@ -433,26 +475,28 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 
 	// ── Group headers (non-selectable separators in global bookmark/recents view)
 	if node.IsGroupHeader {
+		colW := m.listColumnWidth()
 		name := e.Name
-		if len(name) > m.width-4 {
-			name = "…" + name[len(name)-(m.width-5):]
+		if len(name) > colW-4 {
+			name = "…" + name[len(name)-(colW-5):]
 		}
 		line := ui.StyleParentCrumb.Render("  " + name)
-		if m.width > lipgloss.Width(line)+2 {
-			line += ui.StyleMuted.Render(strings.Repeat("─", m.width-lipgloss.Width(line)-2))
+		if colW > lipgloss.Width(line)+2 {
+			line += ui.StyleMuted.Render(strings.Repeat("─", colW-lipgloss.Width(line)-2))
 		}
 		return line
 	}
 
 	// ── Text-search match child (line snippet)
 	if node.IsTextMatch {
+		colW := m.listColumnWidth()
 		lineNum := ui.StyleNumber.Render(fmt.Sprintf(" :%d  ", node.MatchLineNum))
 		snippet := ui.StyleMuted.Render(node.MatchSnippet)
 		line := lineNum + snippet
 		if idx == m.cursor {
 			lineWidth := lipgloss.Width(line)
-			if lineWidth < m.width {
-				line = line + strings.Repeat(" ", m.width-lineWidth)
+			if lineWidth < colW {
+				line = line + strings.Repeat(" ", colW-lineWidth)
 			}
 			return ui.StyleSelected.Render(line)
 		}
@@ -554,7 +598,8 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 		line = line + padding + ui.StyleDetail.Render(detail)
 	}
 
-	maxW := m.width - 1
+	colW := m.listColumnWidth()
+	maxW := colW - 1
 	if maxW < 10 {
 		maxW = 10
 	}
@@ -565,8 +610,8 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 	// Highlight selected row
 	if idx == m.cursor {
 		lineWidth := lipgloss.Width(line)
-		if lineWidth < m.width {
-			line = line + strings.Repeat(" ", m.width-lineWidth)
+		if lineWidth < colW {
+			line = line + strings.Repeat(" ", colW-lineWidth)
 		}
 		return ui.StyleSelected.Render(line)
 	}
@@ -611,9 +656,10 @@ func (m Model) renderTabNode(idx int, node TreeNode) string {
 	line := icon + nameStr + rel + timeStr
 
 	if idx == m.cursor {
+		colW := m.listColumnWidth()
 		lineWidth := lipgloss.Width(line)
-		if lineWidth < m.width {
-			line = line + strings.Repeat(" ", m.width-lineWidth)
+		if lineWidth < colW {
+			line = line + strings.Repeat(" ", colW-lineWidth)
 		}
 		return ui.StyleSelected.Render(line)
 	}
@@ -849,6 +895,130 @@ func (m Model) renderClipboardBar() string {
 	))
 }
 
+// ─── Preview panel ────────────────────────────────────────────────────────────
+
+// renderPreviewPanel renders the right-hand preview column at the given outer
+// dimensions (the left border of StylePreview consumes 1 column, and the
+// padding consumes 2 more, so the usable content width is width-3).
+func (m Model) renderPreviewPanel(width, height int) string {
+	// Inner content width: border (1) + padding left (1) + padding right (1) = 3
+	const borderAndPad = 3
+	innerW := width - borderAndPad
+	if innerW < 4 {
+		innerW = 4
+	}
+
+	content := m.renderPreviewContent(innerW, height)
+
+	return ui.StylePreview.
+		Width(innerW).
+		Height(height).
+		Render(content)
+}
+
+// renderPreviewContent returns the content string for the preview panel.
+func (m Model) renderPreviewContent(width, height int) string {
+	e := m.selectedEntry()
+	if e == nil {
+		return ui.StyleMuted.Render("nothing selected")
+	}
+
+	isImage := !e.IsDir() && fs.IsImageFile(e.Path)
+
+	// When in image mode and the file is renderable, show the mosaic.
+	if m.previewMode == PreviewModeImage && isImage {
+		toggle := ui.StyleMuted.Render("[" + m.keys.previewMode + "] details")
+		rendered := m.renderImagePreview(e.Path, width, height-1) // -1 for toggle hint
+		return rendered + "\n" + toggle
+	}
+
+	// Details view (or non-image fallback).
+	title := ui.StylePreviewTitle.Render("details")
+	if isImage {
+		title += "  " + ui.StyleMuted.Render("[" + m.keys.previewMode + "] image")
+	}
+	return title + "\n" + renderFileInfo(*e, width)
+}
+
+// renderImagePreview returns a mosaic-rendered image string, using a per-size
+// cache to avoid re-decoding on every frame. Cache writes are safe from a
+// value-receiver because maps are reference types in Go.
+func (m Model) renderImagePreview(path string, width, height int) string {
+	if m.previewCache == nil {
+		return ui.StyleMuted.Render("(preview unavailable)")
+	}
+	key := fmt.Sprintf("%s\x00%d\x00%d", path, width, height)
+	if cached, ok := m.previewCache[key]; ok {
+		return cached
+	}
+	result := decodeAndRenderImage(path, width, height)
+	m.previewCache[key] = result
+	return result
+}
+
+// decodeAndRenderImage opens, decodes and renders an image file via mosaic.
+func decodeAndRenderImage(path string, width, height int) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ui.StyleMuted.Render("(cannot open image)")
+	}
+	defer f.Close()
+
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return ui.StyleMuted.Render("(cannot decode image)")
+	}
+
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	renderer := mosaic.New().Width(width).Height(height)
+	return renderer.Render(img)
+}
+
+// renderFileInfo formats filesystem metadata for the given entry into a
+// details panel of the given character width.
+func renderFileInfo(e fs.Entry, width int) string {
+	var b strings.Builder
+
+	// Path — truncate if it exceeds the panel width.
+	path := e.Path
+	if len(path) > width {
+		path = "…" + path[len(path)-width+1:]
+	}
+	b.WriteString(ui.StyleMuted.Render(path))
+	b.WriteString("\n\n")
+
+	row := func(label, value string) {
+		if len(value) > width-11 && width > 12 {
+			value = value[:width-11]
+		}
+		b.WriteString(ui.StylePreviewLabel.Render(fmt.Sprintf("  %-8s", label)))
+		b.WriteString(" " + value + "\n")
+	}
+
+	if e.IsDir() {
+		row("type", "directory")
+		nf, nd, sz := fs.DirStats(e.Path)
+		row("items", fmt.Sprintf("%d files, %d dirs", nf, nd))
+		row("size", fs.HumanSize(sz))
+	} else {
+		row("type", fs.FileMimeType(e.Path, false))
+		row("size", fs.HumanSize(e.Size))
+	}
+
+	row("modified", fs.FileModTime(e.Path))
+	row("created", fs.FileBirthTime(e.Path))
+	row("perms", fs.FilePermissions(e.Path))
+	row("owner", fs.FileOwner(e.Path))
+
+	return b.String()
+}
+
 // ─── Status bar ───────────────────────────────────────────────────────────────
 
 func (m Model) renderStatusBar() string {
@@ -942,7 +1112,11 @@ func (m Model) renderStatusBar() string {
 
 	switch m.hintsMode {
 	case HintsNavigation:
-		return render(withMore([]string{"[" + k.pageUp + "/" + k.pageDown + "]Page", "[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot", "[" + k.searchKey + "]Search", "[" + k.plugins + "]Plugins", "[" + k.toggleList + "]Files:" + listLabel, "[" + k.showUpdates + "]Updates", "[" + k.toggleHidden + "]Hidden"}))
+		previewHint := "[" + k.previewToggle + "]Preview"
+		if m.previewVisible {
+			previewHint = "[" + k.previewToggle + "]Preview  [" + k.previewMode + "]Image/Details"
+		}
+		return render(withMore([]string{"[" + k.pageUp + "/" + k.pageDown + "]Page", "[" + k.jumpTop + "/" + k.jumpBottom + "]Top/Bot", "[" + k.searchKey + "]Search", "[" + k.plugins + "]Plugins", "[" + k.toggleList + "]Files:" + listLabel, previewHint, "[" + k.showUpdates + "]Updates"}))
 	case HintsActions:
 		hints := []string{"[" + k.add + "]Add", "[" + k.delete + "]Delete", "[" + k.rename + "]Rename", "[" + k.yank + "/" + k.cut + "]Yank/Cut", "[" + k.paste + "]Paste"}
 		if m.clipboardPath == "" {

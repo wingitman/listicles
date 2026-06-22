@@ -215,6 +215,27 @@ var friendlyMimeLabels = map[string]string{
 	".key": "Key file",
 }
 
+// imageExtensions is the set of file extensions that can be decoded and
+// rendered as images in the preview panel.
+var imageExtensions = map[string]bool{
+	".png":  true,
+	".jpg":  true,
+	".jpeg": true,
+	".gif":  true,
+	".webp": true,
+	".bmp":  true,
+	".ico":  true,
+	".tiff": true,
+	".tif":  true,
+}
+
+// IsImageFile reports whether the file at path has an image extension that the
+// preview panel can render (PNG, JPEG, GIF, WebP, BMP, ICO, TIFF).
+func IsImageFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return imageExtensions[ext]
+}
+
 // ScanDir lists entries in dirPath according to showHidden and showFiles flags.
 // gitignorePatterns is a slice of patterns from .gitignore; matching entries
 // have their Ignored field set to true but are still included in the result so

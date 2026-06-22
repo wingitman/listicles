@@ -47,6 +47,8 @@ type Keybinds struct {
 	ShowHints        string `toml:"show_hints"`
 	ShowUpdates      string `toml:"show_updates"`
 	Plugins          string `toml:"plugins"`
+	PreviewToggle    string `toml:"preview_toggle"`
+	PreviewMode      string `toml:"preview_mode"`
 }
 
 // Display holds display preferences.
@@ -126,6 +128,8 @@ var keybindEntries = []struct{ key, comment string }{
 	{"show_hints", "cycle hint display mode"},
 	{"show_updates", "show update history and installers"},
 	{"plugins", "show optional plugin integrations"},
+	{"preview_toggle", "toggle file/image preview panel"},
+	{"preview_mode", "swap image / details in preview panel"},
 }
 
 // displayEntries is the authoritative list of every display TOML key, used for
@@ -196,6 +200,8 @@ func Default() *Config {
 			ShowHints:        "?",
 			ShowUpdates:      "U",
 			Plugins:          "P",
+			PreviewToggle:    "v",
+			PreviewMode:      "V",
 		},
 		Display: Display{
 			ShowHidden:       false,
@@ -389,6 +395,12 @@ func applyKeybindDefaults(cfg *Config) {
 	}
 	if cfg.Keybinds.Plugins == "" {
 		cfg.Keybinds.Plugins = d.Plugins
+	}
+	if cfg.Keybinds.PreviewToggle == "" {
+		cfg.Keybinds.PreviewToggle = d.PreviewToggle
+	}
+	if cfg.Keybinds.PreviewMode == "" {
+		cfg.Keybinds.PreviewMode = d.PreviewMode
 	}
 }
 
@@ -778,6 +790,8 @@ func keybindValues(k *Keybinds) map[string]string {
 		"show_hints":         k.ShowHints,
 		"show_updates":       k.ShowUpdates,
 		"plugins":            k.Plugins,
+		"preview_toggle":     k.PreviewToggle,
+		"preview_mode":       k.PreviewMode,
 	}
 }
 

@@ -96,4 +96,20 @@ var (
 	StyleClipboard = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F0E07C")).
 			Bold(true)
+
+	// StylePreview: left-bordered panel for the file/image preview column.
+	StylePreview = lipgloss.NewStyle().
+			BorderLeft(true).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(colorBorder).
+			Padding(0, 1)
+
+	// StylePreviewLabel: muted label text used in the file-info panel.
+	StylePreviewLabel = lipgloss.NewStyle().
+				Foreground(colorMuted)
+
+	// StylePreviewTitle: accent title line at the top of the preview panel.
+	StylePreviewTitle = lipgloss.NewStyle().
+				Foreground(colorAccent).
+				Bold(true)
 )

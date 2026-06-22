@@ -89,6 +89,14 @@ const (
 	HintsActions                     // secondary action/view hints
 )
 
+// PreviewMode controls what the side preview panel shows.
+type PreviewMode int
+
+const (
+	PreviewModeImage   PreviewMode = iota // show rendered image (images only)
+	PreviewModeDetails                    // show file metadata
+)
+
 // ClipOp is the type of pending clipboard operation.
 type ClipOp int
 
@@ -195,6 +203,11 @@ type Model struct {
 	pluginCursor   int
 
 	keys resolvedKeys
+
+	// Preview panel
+	previewVisible bool
+	previewMode    PreviewMode
+	previewCache   map[string]string // key: "path:width:height" → rendered string
 }
 
 // ─── Keybinds ─────────────────────────────────────────────────────────────────
@@ -234,6 +247,8 @@ type resolvedKeys struct {
 	showHints        string
 	showUpdates      string
 	plugins          string
+	previewToggle    string
+	previewMode      string
 }
 
 type pluginInfo struct {
@@ -284,6 +299,8 @@ func resolveKeys(k config.Keybinds) resolvedKeys {
 		showHints:        k.ShowHints,
 		showUpdates:      k.ShowUpdates,
 		plugins:          k.Plugins,
+		previewToggle:    k.PreviewToggle,
+		previewMode:      k.PreviewMode,
 	}
 }
 
@@ -508,6 +525,35 @@ func (m *Model) selectedNode() *TreeNode {
 	return &m.nodes[m.cursor]
 }
 
+// previewPanelWidth returns the width of the preview column (including its
+// left border), or 0 when the panel is hidden or the terminal is too narrow.
+func (m Model) previewPanelWidth() int {
+	if !m.previewVisible || m.width < 80 {
+		return 0
+	}
+	pw := m.width * 2 / 5
+	if pw < 34 {
+		pw = 34
+	}
+	if pw > 72 {
+		pw = 72
+	}
+	return pw
+}
+
+// listColumnWidth returns the character width available for the file-tree list.
+func (m Model) listColumnWidth() int {
+	pw := m.previewPanelWidth()
+	if pw == 0 {
+		return m.width
+	}
+	lw := m.width - pw
+	if lw < 24 {
+		lw = 24
+	}
+	return lw
+}
+
 func (m *Model) visibleRows() int {
 	reserved := 6
 	if m.cfg != nil {
@@ -619,6 +665,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Invalidate image cache so images are re-rendered at the new size.
+		m.previewCache = make(map[string]string)
 		return m, nil
 
 	case tea.MouseMsg:
@@ -1342,6 +1390,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Toggle detail level
 		if matchKey(key, m.keys.details) {
 			m.detailLevel = (m.detailLevel + 1) % 9
+			return m, nil
+		}
+
+		// Toggle preview panel open/closed
+		if matchKey(key, m.keys.previewToggle) {
+			m.previewVisible = !m.previewVisible
+			if m.previewVisible && m.previewCache == nil {
+				m.previewCache = make(map[string]string)
+			}
+			return m, nil
+		}
+
+		// Toggle preview mode: image ↔ details (only when panel is open)
+		if matchKey(key, m.keys.previewMode) && m.previewVisible {
+			if m.previewMode == PreviewModeImage {
+				m.previewMode = PreviewModeDetails
+			} else {
+				m.previewMode = PreviewModeImage
+			}
 			return m, nil
 		}
 
