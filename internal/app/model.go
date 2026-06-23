@@ -2255,7 +2255,7 @@ func (m Model) openSearchInput() (tea.Model, tea.Cmd) {
 	m.searchInputActive = true
 	m.textInput.Reset()
 	m.textInput.Placeholder = "query  (-r recursive  -t text  -z zoxide)"
-	m.textInput.SetValue("")
+	m.textInput.SetValue("-r")
 	m.textInput.Focus()
 	m.mode = ModeSearch
 	return m, textinput.Blink
