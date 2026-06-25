@@ -1,19 +1,28 @@
 package app
 
 import (
+	"compress/gzip"
 	"fmt"
 	"image"
+	"image/color"
+	stdDraw "image/draw"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/mosaic"
+	_ "github.com/askeladdk/aseprite"
+	_ "github.com/gen2brain/heic"
+	"github.com/oov/psd"
+	"github.com/srwiley/oksvg"
+	"github.com/srwiley/rasterx"
 	_ "golang.org/x/image/bmp"
+	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 	"github.com/wingitman/listicles/internal/fs"
@@ -897,26 +906,111 @@ func (m Model) renderClipboardBar() string {
 
 // ─── Preview panel ────────────────────────────────────────────────────────────
 
-// renderPreviewPanel renders the right-hand preview column at the given outer
-// dimensions (the left border of StylePreview consumes 1 column, and the
-// padding consumes 2 more, so the usable content width is width-3).
+// renderPreviewPanel renders the right-hand preview column.
+//
+// For image content the panel is built manually, line-by-line, without passing
+// the halfblock ANSI sequences through lipgloss's Render pipeline. Doing so
+// causes spurious line-wrapping because the Unicode width library used by
+// lipgloss measures the ▀ glyph (U+2580) as 2 columns rather than 1 in some
+// configurations, making every halfblock row appear twice as wide as it is and
+// causing lipgloss to wrap it — producing the alternating stripe artifact.
+//
+// For text/details content lipgloss is used normally.
 func (m Model) renderPreviewPanel(width, height int) string {
-	// Inner content width: border (1) + padding left (1) + padding right (1) = 3
-	const borderAndPad = 3
-	innerW := width - borderAndPad
+	// Border (1) + left pad (1) + right pad (1) = 3 overhead columns.
+	const overhead = 3
+	innerW := width - overhead
 	if innerW < 4 {
 		innerW = 4
 	}
 
-	content := m.renderPreviewContent(innerW, height)
+	e := m.selectedEntry()
+	showImage := e != nil && !e.IsDir() &&
+		fs.IsImageFile(e.Path) && m.previewMode == PreviewModeImage
 
-	return ui.StylePreview.
-		Width(innerW).
-		Height(height).
-		Render(content)
+	if showImage {
+		if panel := m.buildImagePanel(e.Path, innerW, height); panel != "" {
+			return panel
+		}
+		// Image rendering produced no visible content (e.g. unsupported SVG
+		// features). Show the details view with a note so the panel isn't blank.
+		note := ui.StyleMuted.Render("  preview unavailable")
+		content := ui.StylePreviewTitle.Render("details") + "\n" + note + "\n" + renderFileInfo(*e, innerW)
+		return ui.StylePreview.Width(innerW).Height(height).Render(content)
+	}
+
+	// Text / details path — lipgloss handles layout.
+	content := m.renderPreviewContent(innerW, height)
+	return ui.StylePreview.Width(innerW).Height(height).Render(content)
 }
 
-// renderPreviewContent returns the content string for the preview panel.
+// buildImagePanel constructs the preview panel for image content without
+// involving lipgloss's text-layout engine for the ANSI halfblock rows.
+// Each output line is exactly (innerW + 3) terminal columns wide:
+//
+//	│[space][innerW cols of content][space]\n
+//
+// Returns "" when the render produced no visible image (e.g. unsupported SVG
+// features), so the caller can fall back to showing the details view.
+func (m Model) buildImagePanel(path string, innerW, height int) string {
+	imgRows := height - 1 // last row reserved for the mode-toggle hint
+	if imgRows < 1 {
+		imgRows = 1
+	}
+
+	imageStr := m.renderImagePreview(path, innerW, imgRows)
+
+	// No ▀ glyphs = the decode/render failed or produced nothing visible.
+	// Signal the caller to use the details fallback instead of a blank panel.
+	if strings.Count(imageStr, "▀") == 0 {
+		return ""
+	}
+
+	lines := strings.Split(strings.TrimRight(imageStr, "\n"), "\n")
+
+	hint := ui.StyleMuted.Render("[" + m.keys.previewMode + "] details")
+	border := ui.StyleMuted.Render("│")
+
+	// darkFill returns n spaces with an explicit dark background so that
+	// transparent terminals don't bleed the desktop through unused cells.
+	darkFill := func(n int) string {
+		if n <= 0 {
+			return ""
+		}
+		return fmt.Sprintf("\x1b[48;2;26;26;46m%s\x1b[0m", strings.Repeat(" ", n))
+	}
+
+	var sb strings.Builder
+	for row := 0; row < height; row++ {
+		sb.WriteString(border)
+		sb.WriteByte(' ') // left pad
+
+		if row == height-1 {
+			// Hint row.
+			sb.WriteString(hint)
+			if fill := innerW - lipgloss.Width(hint); fill > 0 {
+				sb.WriteString(darkFill(fill))
+			}
+		} else if row < len(lines) {
+			// Image row — write raw ANSI halfblocks; do NOT pass through lipgloss.
+			sb.WriteString(lines[row])
+			// Count ▀ runes to determine exact rendered column width.
+			if fill := innerW - strings.Count(lines[row], "▀"); fill > 0 {
+				sb.WriteString(darkFill(fill))
+			}
+		} else {
+			// Blank row below the image.
+			sb.WriteString(darkFill(innerW))
+		}
+
+		sb.WriteByte(' ') // right pad
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// renderPreviewContent returns the content string for non-image panel modes
+// (details view, or image file in details mode). This is fed into lipgloss.
 func (m Model) renderPreviewContent(width, height int) string {
 	e := m.selectedEntry()
 	if e == nil {
@@ -924,13 +1018,6 @@ func (m Model) renderPreviewContent(width, height int) string {
 	}
 
 	isImage := !e.IsDir() && fs.IsImageFile(e.Path)
-
-	// When in image mode and the file is renderable, show the mosaic.
-	if m.previewMode == PreviewModeImage && isImage {
-		toggle := ui.StyleMuted.Render("[" + m.keys.previewMode + "] details")
-		rendered := m.renderImagePreview(e.Path, width, height-1) // -1 for toggle hint
-		return rendered + "\n" + toggle
-	}
 
 	// Details view (or non-image fallback).
 	title := ui.StylePreviewTitle.Render("details")
@@ -956,28 +1043,255 @@ func (m Model) renderImagePreview(path string, width, height int) string {
 	return result
 }
 
-// decodeAndRenderImage opens, decodes and renders an image file via mosaic.
-func decodeAndRenderImage(path string, width, height int) string {
+// ── Image decoder ─────────────────────────────────────────────────────────────
+
+// decodeAndRenderImage decodes an image file and renders it as truecolor
+// halfblock terminal art sized to fit panelCols × panelRows terminal cells.
+//
+// Supported formats:
+//   - PNG, JPEG, GIF, WebP, BMP, TIFF  — stdlib / golang.org/x/image decoders
+//   - HEIC / HEIF                       — gen2brain/heic (CGo-free via wasm2go)
+//   - Aseprite (.ase / .aseprite)       — askeladdk/aseprite
+//   - Photoshop (.psd / .psb)           — oov/psd (merged image)
+//   - SVG / SVGZ                        — srwiley/oksvg + rasterx
+func decodeAndRenderImage(path string, panelCols, panelRows int) string {
+	if panelCols < 1 || panelRows < 1 {
+		return ""
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+
+	switch ext {
+	case ".svg", ".svgz":
+		img, err := rasterizeSVG(path, panelCols, panelRows)
+		if err != nil {
+			return ui.StyleMuted.Render("  (SVG: " + truncErr(err) + ")")
+		}
+		return renderHalfblocks(img, panelCols, panelRows)
+
+	case ".psd", ".psb":
+		img, err := decodePSD(path)
+		if err != nil {
+			return ui.StyleMuted.Render("  (PSD: " + truncErr(err) + ")")
+		}
+		return scaleAndRender(img, panelCols, panelRows)
+
+	default:
+		f, err := os.Open(path)
+		if err != nil {
+			return ui.StyleMuted.Render("  (cannot open image)")
+		}
+		defer f.Close()
+		img, _, err := image.Decode(f)
+		if err != nil {
+			return ui.StyleMuted.Render("  (cannot decode: " + truncErr(err) + ")")
+		}
+		return scaleAndRender(img, panelCols, panelRows)
+	}
+}
+
+// scaleAndRender scales img to fit within panelCols × panelRows and renders it.
+func scaleAndRender(img image.Image, panelCols, panelRows int) string {
+	b := img.Bounds()
+	outCols, outRows := fitImageToPanel(b.Dx(), b.Dy(), panelCols, panelRows)
+	pixW, pixH := outCols, outRows*2
+	scaled := image.NewRGBA(image.Rect(0, 0, pixW, pixH))
+	xdraw.ApproxBiLinear.Scale(scaled, scaled.Bounds(), img, img.Bounds(), stdDraw.Over, nil)
+	return renderHalfblocks(scaled, outCols, outRows)
+}
+
+// decodePSD decodes a Photoshop PSD/PSB file and returns its merged image.
+func decodePSD(path string) (image.Image, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ui.StyleMuted.Render("(cannot open image)")
+		return nil, err
+	}
+	defer f.Close()
+	doc, _, err := psd.Decode(f, &psd.DecodeOptions{SkipMergedImage: false})
+	if err != nil {
+		return nil, err
+	}
+	if doc.Picker == nil {
+		return nil, fmt.Errorf("no merged image in PSD")
+	}
+	return doc.Picker, nil
+}
+
+// rasterizeSVG rasterizes an SVG or SVGZ file into an RGBA image scaled to
+// fit within panelCols × panelRows terminal cells, preserving aspect ratio.
+func rasterizeSVG(path string, panelCols, panelRows int) (image.Image, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
 	defer f.Close()
 
-	img, _, err := image.Decode(f)
+	// SVGZ is gzip-compressed SVG; decompress on the fly.
+	var r interface {
+		Read([]byte) (int, error)
+	} = f
+	if strings.ToLower(filepath.Ext(path)) == ".svgz" {
+		gz, gerr := gzip.NewReader(f)
+		if gerr != nil {
+			return nil, gerr
+		}
+		defer gz.Close()
+		r = gz
+	}
+
+	icon, err := oksvg.ReadIconStream(r)
 	if err != nil {
-		return ui.StyleMuted.Render("(cannot decode image)")
+		return nil, err
 	}
 
-	if width < 1 {
-		width = 1
+	svgW, svgH := icon.ViewBox.W, icon.ViewBox.H
+	if svgW <= 0 {
+		svgW = float64(panelCols)
 	}
-	if height < 1 {
-		height = 1
+	if svgH <= 0 {
+		svgH = float64(panelRows * 2)
 	}
 
-	renderer := mosaic.New().Width(width).Height(height)
-	return renderer.Render(img)
+	outCols, outRows := fitImageToPanel(int(svgW), int(svgH), panelCols, panelRows)
+	pixW, pixH := outCols, outRows*2
+
+	icon.SetTarget(0, 0, float64(pixW), float64(pixH))
+	rgba := image.NewRGBA(image.Rect(0, 0, pixW, pixH))
+
+	// Pre-fill with the app's dark background so transparent SVGs look right.
+	bg := &image.Uniform{color.RGBA{0x1A, 0x1A, 0x2E, 0xFF}}
+	stdDraw.Draw(rgba, rgba.Bounds(), bg, image.Point{}, stdDraw.Src)
+
+	scanner := rasterx.NewScannerGV(pixW, pixH, rgba, rgba.Bounds())
+	icon.Draw(rasterx.NewDasher(pixW, pixH, scanner), 1.0)
+
+	// oksvg silently skips unsupported features (e.g. linearGradient fill
+	// references, CSS class styles). If every sampled pixel still equals the
+	// pre-fill background, nothing was rendered — treat that as a failure so
+	// the caller can show the details view instead of a blank panel.
+	if svgRenderedNothing(rgba, 0x1A, 0x1A, 0x2E) {
+		return nil, fmt.Errorf("no visible content (SVG may use unsupported features such as gradients or CSS styles)")
+	}
+
+	return rgba, nil
+}
+
+// svgRenderedNothing samples the image on a coarse grid and returns true when
+// every sampled pixel matches the background colour — indicating that oksvg
+// produced no visible output.
+func svgRenderedNothing(img *image.RGBA, bgR, bgG, bgB uint8) bool {
+	b := img.Bounds()
+	const step = 3
+	for y := b.Min.Y; y < b.Max.Y; y += step {
+		for x := b.Min.X; x < b.Max.X; x += step {
+			r, g, bv, _ := img.At(x, y).RGBA()
+			if uint8(r>>8) != bgR || uint8(g>>8) != bgG || uint8(bv>>8) != bgB {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// fitImageToPanel calculates output dimensions in terminal cells that fit an
+// image of imgW × imgH pixels within panelCols × panelRows cells, preserving
+// aspect ratio. Each terminal row covers ~2× the visual height of a column.
+func fitImageToPanel(imgW, imgH, panelCols, panelRows int) (cols, rows int) {
+	if imgW < 1 {
+		imgW = 1
+	}
+	if imgH < 1 {
+		imgH = 1
+	}
+	if panelCols < 1 {
+		panelCols = 1
+	}
+	if panelRows < 1 {
+		panelRows = 1
+	}
+	panelVis := float64(panelCols) / (float64(panelRows) * 2.0)
+	imgAspect := float64(imgW) / float64(imgH)
+
+	if imgAspect >= panelVis {
+		cols = panelCols
+		rows = int(math.Round(float64(panelCols) / imgAspect / 2.0))
+	} else {
+		rows = panelRows
+		cols = int(math.Round(float64(panelRows) * 2.0 * imgAspect))
+	}
+	if cols < 1 {
+		cols = 1
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	if cols > panelCols {
+		cols = panelCols
+	}
+	if rows > panelRows {
+		rows = panelRows
+	}
+	return
+}
+
+// renderHalfblocks renders a pre-scaled image as truecolor terminal art using
+// upper-halfblock glyphs (▀). Foreground = top pixel, background = bottom pixel.
+// The image should be exactly cols × (rows*2) pixels.
+//
+// Each glyph uses two separate SGR sequences (one for fg, one for bg) followed
+// by an explicit reset. This per-glyph reset is the format charmbracelet/x/ansi
+// produces and is what lipgloss's width counter expects; a single combined
+// sequence across multiple glyphs can confuse the counter and cause spurious
+// line-wrapping that produces the alternating-stripe artifact.
+func renderHalfblocks(img image.Image, cols, rows int) string {
+	var sb strings.Builder
+	b := img.Bounds()
+
+	for row := 0; row < rows; row++ {
+		for col := 0; col < cols; col++ {
+			x := b.Min.X + col
+			topY := b.Min.Y + row*2
+			botY := b.Min.Y + row*2 + 1
+
+			topR, topG, topB, topA := img.At(x, topY).RGBA()
+			botR, botG, botB, botA := img.At(x, botY).RGBA()
+
+			fgR, fgG, fgB := compositeOnDark(topR, topG, topB, topA)
+			bgR, bgG, bgB := compositeOnDark(botR, botG, botB, botA)
+
+			// Two separate sequences + per-glyph reset.
+			fmt.Fprintf(&sb, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀\x1b[0m",
+				fgR, fgG, fgB, bgR, bgG, bgB)
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// compositeOnDark alpha-composites a premultiplied RGBA pixel (as returned by
+// image.Color.RGBA) onto the app's dark background (#1A1A2E).
+func compositeOnDark(r, g, b, a uint32) (uint8, uint8, uint8) {
+	const bgR, bgG, bgB = 0x1A, 0x1A, 0x2E
+	if a == 0xffff {
+		return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8)
+	}
+	if a == 0 {
+		return bgR, bgG, bgB
+	}
+	alpha := float64(a) / 0xffff
+	inv := 1.0 - alpha
+	return uint8(float64(r>>8)*alpha + float64(bgR)*inv),
+		uint8(float64(g>>8)*alpha + float64(bgG)*inv),
+		uint8(float64(b>>8)*alpha + float64(bgB)*inv)
+}
+
+// truncErr returns a short error string suitable for inline display.
+func truncErr(err error) string {
+	s := err.Error()
+	if len(s) > 40 {
+		return s[:40] + "…"
+	}
+	return s
 }
 
 // renderFileInfo formats filesystem metadata for the given entry into a

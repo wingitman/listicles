@@ -172,15 +172,28 @@ var friendlyMimeLabels = map[string]string{
 	".docx": "Word document",
 	".xls":  "Excel spreadsheet",
 	".xlsx": "Excel spreadsheet",
-	// Images
+	// Images — raster
 	".png":  "PNG image",
 	".jpg":  "JPEG image",
 	".jpeg": "JPEG image",
 	".gif":  "GIF image",
-	".svg":  "SVG image",
 	".webp": "WebP image",
 	".ico":  "Icon image",
 	".bmp":  "BMP image",
+	".tiff": "TIFF image",
+	".tif":  "TIFF image",
+	// Images — vector / compressed vector
+	".svg":  "SVG image",
+	".svgz": "SVG image (compressed)",
+	// Images — Apple HEIF
+	".heic": "HEIC image",
+	".heif": "HEIF image",
+	// Images — design / pixel art
+	".psd":      "Photoshop document",
+	".psb":      "Photoshop document (large)",
+	".xcf":      "GIMP document",
+	".ase":      "Aseprite sprite",
+	".aseprite": "Aseprite sprite",
 	// Archives
 	".zip": "ZIP archive",
 	".tar": "TAR archive",
@@ -218,15 +231,27 @@ var friendlyMimeLabels = map[string]string{
 // imageExtensions is the set of file extensions that can be decoded and
 // rendered as images in the preview panel.
 var imageExtensions = map[string]bool{
+	// Standard raster
 	".png":  true,
 	".jpg":  true,
 	".jpeg": true,
 	".gif":  true,
 	".webp": true,
 	".bmp":  true,
-	".ico":  true,
 	".tiff": true,
 	".tif":  true,
+	// Vector
+	".svg":  true,
+	".svgz": true,
+	// Apple / HEIF
+	".heic": true,
+	".heif": true,
+	// Photoshop
+	".psd": true,
+	".psb": true,
+	// Aseprite pixel art
+	".ase":      true,
+	".aseprite": true,
 }
 
 // IsImageFile reports whether the file at path has an image extension that the
