@@ -10,7 +10,6 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss
 
 ## Requirements
 
-- Go 1.21+ (to build)
 - A terminal with colour support
 - `bash`, `zsh`, `fish`, or `powershell (pwsh)`
 
@@ -21,8 +20,6 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss
 ## Install
 
 ### Windows
-
-No `make` or Unix tools required — only [Go](https://go.dev/dl/).
 
 ```powershell
 git clone https://github.com/wingitman/listicles.git
@@ -41,7 +38,7 @@ Open a new PowerShell terminal and type `l`.
 
 ### macOS / Linux
 
-Requires `make` and Go.
+Requires `make`.
 
 ```bash
 git clone https://github.com/wingitman/listicles.git
@@ -50,7 +47,7 @@ make install
 ```
 
 This builds the binary, copies it to `~/.local/bin/listicles`, and patches your shell rc file (`~/.bashrc`, `~/.zshrc`, `~/.config/fish/config.fish`, or `~/.config/powershell/Microsoft.PowerShell_profile.ps1`).
-Then reload your shell and type `l`.
+Then reload your shell and type `l` or `listicles`.
 
 ---
 
