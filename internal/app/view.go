@@ -15,19 +15,20 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	_ "github.com/askeladdk/aseprite"
+	"github.com/charmbracelet/lipgloss"
 	_ "github.com/gen2brain/heic"
 	"github.com/oov/psd"
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
+	"github.com/wingitman/listicles/internal/config"
+	"github.com/wingitman/listicles/internal/fs"
+	"github.com/wingitman/listicles/internal/state"
+	"github.com/wingitman/listicles/internal/ui"
 	_ "golang.org/x/image/bmp"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
-	"github.com/wingitman/listicles/internal/fs"
-	"github.com/wingitman/listicles/internal/state"
-	"github.com/wingitman/listicles/internal/ui"
 )
 
 // ─── Top-level view ───────────────────────────────────────────────────────────
@@ -51,6 +52,11 @@ func (m Model) View() string {
 		return b.String()
 	case ModePlugins:
 		b.WriteString(m.renderPluginsScreen())
+		b.WriteString("\n")
+		b.WriteString(m.renderStatusBar())
+		return b.String()
+	case ModeTheme:
+		b.WriteString(m.renderThemeScreen())
 		b.WriteString("\n")
 		b.WriteString(m.renderStatusBar())
 		return b.String()
@@ -172,8 +178,8 @@ func (m Model) renderHeader() string {
 		badgeStr = "  " + strings.Join(badges, " ")
 	}
 
-	delby := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Render("delby")
-	soft := lipgloss.NewStyle().Foreground(lipgloss.Color("#5865F2")).Bold(true).Render("soft")
+	delby := ui.StyleBrandPrimary.Render("delby")
+	soft := ui.StyleBrandSecondary.Render("soft")
 	brand := " " + delby + soft + " "
 	left := ui.StylePath.Render(pathStr) + badgeStr
 	leftWidth := lipgloss.Width(left)
@@ -503,6 +509,7 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 		snippet := ui.StyleMuted.Render(node.MatchSnippet)
 		line := lineNum + snippet
 		if idx == m.cursor {
+			line = ui.StyleSelector.Render("▶ ") + line
 			lineWidth := lipgloss.Width(line)
 			if lineWidth < colW {
 				line = line + strings.Repeat(" ", colW-lineWidth)
@@ -618,6 +625,7 @@ func (m Model) renderNode(idx int, node TreeNode, focusedDepth int, siblingIdx i
 
 	// Highlight selected row
 	if idx == m.cursor {
+		line = ui.StyleSelector.Render("▶ ") + line
 		lineWidth := lipgloss.Width(line)
 		if lineWidth < colW {
 			line = line + strings.Repeat(" ", colW-lineWidth)
@@ -665,6 +673,7 @@ func (m Model) renderTabNode(idx int, node TreeNode) string {
 	line := icon + nameStr + rel + timeStr
 
 	if idx == m.cursor {
+		line = ui.StyleSelector.Render("▶ ") + line
 		colW := m.listColumnWidth()
 		lineWidth := lipgloss.Width(line)
 		if lineWidth < colW {
@@ -783,7 +792,7 @@ func (m Model) renderUpdatePrompt() string {
 		c := commits[i]
 		prefix := "  "
 		if i == m.updateCursor {
-			prefix = "> "
+			prefix = ui.StyleSelector.Render("▶ ")
 		}
 		line := fmt.Sprintf("%s%s %s", prefix, c.Short, c.Subject)
 		if i == m.updateCursor {
@@ -849,6 +858,7 @@ func (m Model) renderUpdatesScreen() string {
 		c := commits[i]
 		line := fmt.Sprintf("  %s  %s  %s", c.Short, c.Date, c.Subject)
 		if i == m.updateCursor {
+			line = ui.StyleSelector.Render("▶ ") + line[2:]
 			line = ui.StyleSelected.Render(line)
 		}
 		b.WriteString(line + "\n")
@@ -876,6 +886,7 @@ func (m Model) renderPluginsScreen() string {
 		}
 		line := fmt.Sprintf("  %-8s %-10s %s", info.Name, status, ui.StyleMuted.Render(info.Description))
 		if i == m.pluginCursor {
+			line = ui.StyleSelector.Render("▶ ") + line[2:]
 			lineWidth := lipgloss.Width(line)
 			if lineWidth < m.width {
 				line += strings.Repeat(" ", m.width-lineWidth)
@@ -885,6 +896,30 @@ func (m Model) renderPluginsScreen() string {
 		b.WriteString(line + "\n")
 	}
 	return b.String()
+}
+
+func (m Model) renderThemeScreen() string {
+	var b strings.Builder
+	b.WriteString(ui.StyleInputPrompt.Render("Themes"))
+	b.WriteString("\n")
+	b.WriteString(ui.StyleMuted.Render("Choose a theme and press Enter. Esc cancels."))
+	b.WriteString("\n\n")
+	for i, name := range m.themeNames {
+		line := "  " + name
+		if name == m.cfg.Themes.ThemeName {
+			line += ui.StyleMuted.Render("  (current)")
+		}
+		if i == m.themeCursor {
+			line = ui.StyleSelector.Render("▶ ") + line[2:]
+			lineWidth := lipgloss.Width(line)
+			if lineWidth < m.width {
+				line += strings.Repeat(" ", m.width-lineWidth)
+			}
+			line = ui.StyleSelected.Render(line)
+		}
+		b.WriteString(line + "\n")
+	}
+	return ui.StyleConfirmBox.Render(b.String())
 }
 
 // ─── Clipboard bar ────────────────────────────────────────────────────────────
@@ -1022,7 +1057,7 @@ func (m Model) renderPreviewContent(width, height int) string {
 	// Details view (or non-image fallback).
 	title := ui.StylePreviewTitle.Render("details")
 	if isImage {
-		title += "  " + ui.StyleMuted.Render("[" + m.keys.previewMode + "] image")
+		title += "  " + ui.StyleMuted.Render("["+m.keys.previewMode+"] image")
 	}
 	return title + "\n" + renderFileInfo(*e, width)
 }
@@ -1038,7 +1073,7 @@ func (m Model) renderImagePreview(path string, width, height int) string {
 	if cached, ok := m.previewCache[key]; ok {
 		return cached
 	}
-	result := decodeAndRenderImage(path, width, height)
+	result := decodeAndRenderImage(path, width, height, m.imageBackground())
 	m.previewCache[key] = result
 	return result
 }
@@ -1054,7 +1089,7 @@ func (m Model) renderImagePreview(path string, width, height int) string {
 //   - Aseprite (.ase / .aseprite)       — askeladdk/aseprite
 //   - Photoshop (.psd / .psb)           — oov/psd (merged image)
 //   - SVG / SVGZ                        — srwiley/oksvg + rasterx
-func decodeAndRenderImage(path string, panelCols, panelRows int) string {
+func decodeAndRenderImage(path string, panelCols, panelRows int, imageBackground color.RGBA) string {
 	if panelCols < 1 || panelRows < 1 {
 		return ""
 	}
@@ -1063,18 +1098,18 @@ func decodeAndRenderImage(path string, panelCols, panelRows int) string {
 
 	switch ext {
 	case ".svg", ".svgz":
-		img, err := rasterizeSVG(path, panelCols, panelRows)
+		img, err := rasterizeSVG(path, panelCols, panelRows, imageBackground)
 		if err != nil {
 			return ui.StyleMuted.Render("  (SVG: " + truncErr(err) + ")")
 		}
-		return renderHalfblocks(img, panelCols, panelRows)
+		return renderHalfblocks(img, panelCols, panelRows, imageBackground)
 
 	case ".psd", ".psb":
 		img, err := decodePSD(path)
 		if err != nil {
 			return ui.StyleMuted.Render("  (PSD: " + truncErr(err) + ")")
 		}
-		return scaleAndRender(img, panelCols, panelRows)
+		return scaleAndRender(img, panelCols, panelRows, imageBackground)
 
 	default:
 		f, err := os.Open(path)
@@ -1086,18 +1121,18 @@ func decodeAndRenderImage(path string, panelCols, panelRows int) string {
 		if err != nil {
 			return ui.StyleMuted.Render("  (cannot decode: " + truncErr(err) + ")")
 		}
-		return scaleAndRender(img, panelCols, panelRows)
+		return scaleAndRender(img, panelCols, panelRows, imageBackground)
 	}
 }
 
 // scaleAndRender scales img to fit within panelCols × panelRows and renders it.
-func scaleAndRender(img image.Image, panelCols, panelRows int) string {
+func scaleAndRender(img image.Image, panelCols, panelRows int, imageBackground color.RGBA) string {
 	b := img.Bounds()
 	outCols, outRows := fitImageToPanel(b.Dx(), b.Dy(), panelCols, panelRows)
 	pixW, pixH := outCols, outRows*2
 	scaled := image.NewRGBA(image.Rect(0, 0, pixW, pixH))
 	xdraw.ApproxBiLinear.Scale(scaled, scaled.Bounds(), img, img.Bounds(), stdDraw.Over, nil)
-	return renderHalfblocks(scaled, outCols, outRows)
+	return renderHalfblocks(scaled, outCols, outRows, imageBackground)
 }
 
 // decodePSD decodes a Photoshop PSD/PSB file and returns its merged image.
@@ -1119,7 +1154,7 @@ func decodePSD(path string) (image.Image, error) {
 
 // rasterizeSVG rasterizes an SVG or SVGZ file into an RGBA image scaled to
 // fit within panelCols × panelRows terminal cells, preserving aspect ratio.
-func rasterizeSVG(path string, panelCols, panelRows int) (image.Image, error) {
+func rasterizeSVG(path string, panelCols, panelRows int, imageBackground color.RGBA) (image.Image, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -1159,7 +1194,7 @@ func rasterizeSVG(path string, panelCols, panelRows int) (image.Image, error) {
 	rgba := image.NewRGBA(image.Rect(0, 0, pixW, pixH))
 
 	// Pre-fill with the app's dark background so transparent SVGs look right.
-	bg := &image.Uniform{color.RGBA{0x1A, 0x1A, 0x2E, 0xFF}}
+	bg := &image.Uniform{imageBackground}
 	stdDraw.Draw(rgba, rgba.Bounds(), bg, image.Point{}, stdDraw.Src)
 
 	scanner := rasterx.NewScannerGV(pixW, pixH, rgba, rgba.Bounds())
@@ -1169,11 +1204,32 @@ func rasterizeSVG(path string, panelCols, panelRows int) (image.Image, error) {
 	// references, CSS class styles). If every sampled pixel still equals the
 	// pre-fill background, nothing was rendered — treat that as a failure so
 	// the caller can show the details view instead of a blank panel.
-	if svgRenderedNothing(rgba, 0x1A, 0x1A, 0x2E) {
+	if svgRenderedNothing(rgba, imageBackground.R, imageBackground.G, imageBackground.B) {
 		return nil, fmt.Errorf("no visible content (SVG may use unsupported features such as gradients or CSS styles)")
 	}
 
 	return rgba, nil
+}
+
+func (m Model) imageBackground() color.RGBA {
+	const fallback = "1A1A2E"
+	value := fallback
+	if theme := config.ResolveTheme(m.cfg); theme.Colors["image_background"] != "" {
+		value = strings.TrimPrefix(theme.Colors["image_background"], "#")
+	}
+	if len(value) != 6 {
+		value = fallback
+	}
+	r, rErr := strconv.ParseUint(value[0:2], 16, 8)
+	g, gErr := strconv.ParseUint(value[2:4], 16, 8)
+	b, bErr := strconv.ParseUint(value[4:6], 16, 8)
+	if rErr != nil || gErr != nil || bErr != nil {
+		value = fallback
+		r, _ = strconv.ParseUint(value[0:2], 16, 8)
+		g, _ = strconv.ParseUint(value[2:4], 16, 8)
+		b, _ = strconv.ParseUint(value[4:6], 16, 8)
+	}
+	return color.RGBA{uint8(r), uint8(g), uint8(b), 0xFF}
 }
 
 // svgRenderedNothing samples the image on a coarse grid and returns true when
@@ -1243,7 +1299,7 @@ func fitImageToPanel(imgW, imgH, panelCols, panelRows int) (cols, rows int) {
 // produces and is what lipgloss's width counter expects; a single combined
 // sequence across multiple glyphs can confuse the counter and cause spurious
 // line-wrapping that produces the alternating-stripe artifact.
-func renderHalfblocks(img image.Image, cols, rows int) string {
+func renderHalfblocks(img image.Image, cols, rows int, imageBackground color.RGBA) string {
 	var sb strings.Builder
 	b := img.Bounds()
 
@@ -1256,8 +1312,8 @@ func renderHalfblocks(img image.Image, cols, rows int) string {
 			topR, topG, topB, topA := img.At(x, topY).RGBA()
 			botR, botG, botB, botA := img.At(x, botY).RGBA()
 
-			fgR, fgG, fgB := compositeOnDark(topR, topG, topB, topA)
-			bgR, bgG, bgB := compositeOnDark(botR, botG, botB, botA)
+			fgR, fgG, fgB := compositeOnBackground(topR, topG, topB, topA, imageBackground)
+			bgR, bgG, bgB := compositeOnBackground(botR, botG, botB, botA, imageBackground)
 
 			// Two separate sequences + per-glyph reset.
 			fmt.Fprintf(&sb, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀\x1b[0m",
@@ -1268,10 +1324,10 @@ func renderHalfblocks(img image.Image, cols, rows int) string {
 	return sb.String()
 }
 
-// compositeOnDark alpha-composites a premultiplied RGBA pixel (as returned by
-// image.Color.RGBA) onto the app's dark background (#1A1A2E).
-func compositeOnDark(r, g, b, a uint32) (uint8, uint8, uint8) {
-	const bgR, bgG, bgB = 0x1A, 0x1A, 0x2E
+// compositeOnBackground alpha-composites a premultiplied RGBA pixel onto the
+// configured image background.
+func compositeOnBackground(r, g, b, a uint32, background color.RGBA) (uint8, uint8, uint8) {
+	bgR, bgG, bgB := background.R, background.G, background.B
 	if a == 0xffff {
 		return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8)
 	}
@@ -1415,6 +1471,9 @@ func (m Model) renderStatusBar() string {
 
 	if m.mode == ModePlugins {
 		return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Toggle", "[Esc]Back"}))
+	}
+	if m.mode == ModeTheme {
+		return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Apply", "[Esc]Cancel"}))
 	}
 
 	// ── Normal mode ───────────────────────────────────────────────────────────

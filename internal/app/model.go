@@ -18,6 +18,7 @@ import (
 	"github.com/wingitman/listicles/internal/fs"
 	"github.com/wingitman/listicles/internal/search"
 	"github.com/wingitman/listicles/internal/state"
+	"github.com/wingitman/listicles/internal/ui"
 	appupdate "github.com/wingitman/listicles/internal/update"
 	"github.com/wingitman/listicles/internal/version"
 )
@@ -38,6 +39,7 @@ const (
 	ModeUpdatePrompt      // startup update prompt
 	ModeUpdates           // update history/install screen
 	ModePlugins           // optional plugin integration toggles
+	ModeTheme             // shared theme picker
 )
 
 type InputAction int
@@ -201,6 +203,8 @@ type Model struct {
 	updateCursor   int
 	updateExpanded map[string]bool
 	pluginCursor   int
+	themeCursor    int
+	themeNames     []string
 
 	keys resolvedKeys
 
@@ -249,6 +253,7 @@ type resolvedKeys struct {
 	plugins          string
 	previewToggle    string
 	previewMode      string
+	theme            string
 }
 
 type pluginInfo struct {
@@ -301,12 +306,14 @@ func resolveKeys(k config.Keybinds) resolvedKeys {
 		plugins:          k.Plugins,
 		previewToggle:    k.PreviewToggle,
 		previewMode:      k.PreviewMode,
+		theme:            k.Theme,
 	}
 }
 
 // ─── Constructor ─────────────────────────────────────────────────────────────
 
 func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*Model, error) {
+	applyTheme(cfg)
 	if startDir == "" {
 		var err error
 		startDir, err = os.Getwd()
@@ -327,6 +334,7 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 	}
 
 	installedTools := search.DetectTools()
+	themeNames, _ := config.ThemeNames(cfg)
 	m := &Model{
 		cfg:               cfg,
 		cdFile:            cdFile,
@@ -342,6 +350,7 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 		gitignorePatterns: gitignorePatterns,
 		appState:          appState,
 		updateExpanded:    map[string]bool{},
+		themeNames:        themeNames,
 	}
 
 	if err := m.initTree(startDir); err != nil {
@@ -1040,6 +1049,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// ── Theme picker ────────────────────────────────────────────────────
+		if m.mode == ModeTheme {
+			switch {
+			case key == "esc" || matchKey(key, m.keys.quit):
+				m.mode = ModeNormal
+				return m, nil
+			case matchKey(key, m.keys.up):
+				m.themeCursor--
+				m.clampThemeCursor()
+				return m, nil
+			case matchKey(key, m.keys.down):
+				m.themeCursor++
+				m.clampThemeCursor()
+				return m, nil
+			case matchKey(key, m.keys.confirm):
+				return m.applySelectedTheme()
+			}
+			return m, nil
+		}
+
 		// ── Recents mode ─────────────────────────────────────────────────
 		if m.mode == ModeRecents {
 			switch {
@@ -1188,6 +1217,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if matchKey(key, m.keys.plugins) {
 			m.pluginCursor = 0
 			m.mode = ModePlugins
+			return m, nil
+		}
+
+		if matchKey(key, m.keys.theme) {
+			m.themeNames, _ = config.ThemeNames(m.cfg)
+			m.themeCursor = 0
+			for i, name := range m.themeNames {
+				if name == m.cfg.Themes.ThemeName {
+					m.themeCursor = i
+					break
+				}
+			}
+			m.mode = ModeTheme
 			return m, nil
 		}
 
@@ -1578,6 +1620,9 @@ func (m Model) mouseMove(delta int) (tea.Model, tea.Cmd) {
 	case ModePlugins:
 		m.pluginCursor += delta
 		m.clampPluginCursor()
+	case ModeTheme:
+		m.themeCursor += delta
+		m.clampThemeCursor()
 	case ModeNormal:
 		m.cursor += delta
 		m.clampCursor()
@@ -1848,6 +1893,37 @@ func (m *Model) clampPluginCursor() {
 	}
 }
 
+func (m *Model) clampThemeCursor() {
+	if len(m.themeNames) == 0 {
+		m.themeCursor = 0
+		return
+	}
+	if m.themeCursor < 0 {
+		m.themeCursor = 0
+	}
+	if m.themeCursor >= len(m.themeNames) {
+		m.themeCursor = len(m.themeNames) - 1
+	}
+}
+
+func (m Model) applySelectedTheme() (tea.Model, tea.Cmd) {
+	if m.themeCursor < 0 || m.themeCursor >= len(m.themeNames) {
+		m.mode = ModeNormal
+		return m, nil
+	}
+	name := m.themeNames[m.themeCursor]
+	if err := config.SetThemeName(name); err != nil {
+		m.errorMsg = fmt.Sprintf("Could not save theme: %v", err)
+		m.mode = ModeError
+		return m, nil
+	}
+	m.cfg.Themes.ThemeName = name
+	applyTheme(m.cfg)
+	m.mode = ModeNormal
+	m.statusMsg = "theme: " + name
+	return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearStatusMsg{} })
+}
+
 func (m *Model) toggleSelectedPlugin() error {
 	infos := m.pluginInfos()
 	if len(infos) == 0 || m.pluginCursor >= len(infos) {
@@ -1879,12 +1955,19 @@ func (m *Model) toggleSelectedPlugin() error {
 
 func (m *Model) applyConfig(cfg *config.Config) error {
 	m.cfg = cfg
+	applyTheme(cfg)
 	m.keys = resolveKeys(cfg.Keybinds)
 	m.showHidden = cfg.Display.ShowHidden
 	m.listMode = listModeFromConfig(cfg)
 	m.installedTools = search.DetectTools()
 	m.searchTools = toolsForConfig(m.installedTools, cfg)
+	m.themeNames, _ = config.ThemeNames(cfg)
 	return m.rebuildTree()
+}
+
+func applyTheme(cfg *config.Config) {
+	theme := config.ResolveTheme(cfg)
+	ui.ConfigureTheme(theme.Colors, theme.Terminal)
 }
 
 // ─── Updates helpers ─────────────────────────────────────────────────────────

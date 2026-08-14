@@ -128,6 +128,7 @@ Multi-digit jump: type digits within 500ms. The number being typed shows in the 
 | `Esc` (in search) | Cancel |
 | `U` | Show updates, recent changes, and install history commits |
 | `P` | Show plugins and toggle optional integrations |
+| `T` | Open the theme picker |
 | `o` | Open config in `$EDITOR` |
 | `q` / `Esc` | Quit |
 
@@ -141,7 +142,7 @@ Example: `proj -z` searches zoxide's directory database as you type.
 
 ## Configuration
 
-The config file is created automatically on first launch. Press `o` inside listicles to open it in your editor.
+The config files are created automatically on first launch or install. Press `o` inside listicles to open `listicles.toml` in your editor.
 
 | OS | Path |
 |---|---|
@@ -184,6 +185,7 @@ toggle_hidden = "."
 search        = "/"
 show_updates  = "U"
 plugins       = "P"
+theme         = "T"       # open the theme picker
 
 [display]
 show_hidden        = false
@@ -205,7 +207,63 @@ terminal = ""           # optional terminal command for detached updates
 fd = true       # use fd for full name search when installed
 rg = true       # use rg for full content search when installed
 zoxide = true   # use zoxide for -z directory search when installed
+
+[themes]
+theme_name = "terminal"   # terminal (inherit terminal theme), or a named theme from the reference file
+theme_file = "~/.config/delbysoft/themes.toml"   # shared theme file for Delbysoft apps
+
+# Optional overrides applied after the selected theme:
+# selected_background = "#ffffff"
+# selected_foreground = "#000000"
 ```
+
+### Shared themes
+
+The shared theme file is created automatically at the platform-specific Delbysoft
+configuration path (`~/.config/delbysoft/themes.toml` on Linux). It can be shared
+by other Delbysoft terminal applications:
+
+```toml
+[themes.ocean]
+foreground = "#D7E3FF"
+background = "#101522"
+primary = "#7C9EF0"
+accent = "#F0A47C"
+muted = "#66708F"
+file = "#B0B0CC"
+border = "#35415F"
+selected_background = "#3568B8"
+selected_foreground = "#FFFFFF"
+header_background = "#17213A"
+selector = "#FFFFFF"
+
+[themes.high_contrast]
+foreground = "#FFFFFF"
+background = "#000000"
+primary = "#00FFFF"
+accent = "#FFFF00"
+muted = "#C0C0C0"
+file = "#FFFFFF"
+border = "#FFFFFF"
+selected_background = "#FFFF00"
+selected_foreground = "#000000"
+header_background = "#000000"
+selector = "#FFFF00"
+```
+
+Set `theme_name` to one of these names to use it. Set it to `terminal` to inherit
+the terminal's default colors. Per-app overrides take precedence over the shared
+theme. If the shared file or selected theme is unavailable, listicles uses its
+built-in fallback theme.
+
+The generated file also includes `redteam`, `blueteam`, `vim`, `neovim`,
+`monotone`, `cyberpunk`, and `sands`. Each theme supports the complete shared
+palette: text, accents, errors, success, borders, selection, headers, crumbs,
+clipboard, branding, selector, and image colors.
+
+Installers and updates create the shared file when needed and validate the
+required theme settings. Factory resets restore the `listicles.toml` selection
+without overwriting the shared theme collection.
 
 ## Updates
 

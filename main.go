@@ -27,6 +27,15 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error ensuring config: %v\n", err)
 			os.Exit(1)
 		}
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error validating config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := config.ValidateThemeFile(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error validating themes: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 

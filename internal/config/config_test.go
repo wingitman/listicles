@@ -51,6 +51,7 @@ func TestDefault_FieldValues(t *testing.T) {
 		{"ShowHints", cfg.Keybinds.ShowHints, "?"},
 		{"ShowUpdates", cfg.Keybinds.ShowUpdates, "U"},
 		{"Plugins", cfg.Keybinds.Plugins, "P"},
+		{"Theme", cfg.Keybinds.Theme, "T"},
 		{"DefaultListMode", cfg.Display.DefaultListMode, "dirs_and_files"},
 	}
 	for _, c := range keybindChecks {
@@ -93,7 +94,7 @@ func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 	}
 
 	// Check section headers are present.
-	for _, key := range []string{"[keybinds]", "[display]", "[apps]", "[updates]", "[plugins]"} {
+	for _, key := range []string{"[keybinds]", "[display]", "[apps]", "[updates]", "[plugins]", "[themes]"} {
 		if !strings.Contains(string(content), key) {
 			t.Errorf("expected %q in default config output", key)
 		}
@@ -131,6 +132,113 @@ func TestWriteDefault_ContainsExpectedLines(t *testing.T) {
 	// Must NOT contain the removed vim_mode section.
 	if strings.Contains(string(content), "[vim_mode]") {
 		t.Error("written config must not contain deprecated [vim_mode] section")
+	}
+}
+
+func TestResolveTheme_TerminalWithOverride(t *testing.T) {
+	cfg := Default()
+	cfg.Themes.ThemeName = "terminal"
+	cfg.Themes.SelectedBackground = "#cd0fc1"
+
+	got := ResolveTheme(cfg)
+	if !got.Terminal {
+		t.Fatal("terminal theme should inherit terminal colors")
+	}
+	if got.Colors["selected_background"] != "#cd0fc1" {
+		t.Fatalf("selected background = %q, want override", got.Colors["selected_background"])
+	}
+}
+
+func TestResolveTheme_NamedThemeAndOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "themes.toml")
+	content := `[themes.ocean]
+selected_background = "#123456"
+selected_foreground = "#ffffff"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Default()
+	cfg.Themes.ThemeName = "ocean"
+	cfg.Themes.ThemeFile = path
+	cfg.Themes.SelectedForeground = "#000000"
+
+	got := ResolveTheme(cfg)
+	if got.Terminal {
+		t.Fatal("named theme should not be terminal mode")
+	}
+	if got.Colors["selected_background"] != "#123456" || got.Colors["selected_foreground"] != "#000000" {
+		t.Fatalf("resolved theme = %#v, want shared background and local foreground", got)
+	}
+}
+
+func TestResolveTheme_MissingThemeFallsBack(t *testing.T) {
+	cfg := Default()
+	cfg.Themes.ThemeName = "missing"
+	cfg.Themes.ThemeFile = filepath.Join(t.TempDir(), "themes.toml")
+
+	got := ResolveTheme(cfg)
+	if got.Terminal || len(got.Colors) != 0 {
+		t.Fatalf("missing theme should return built-in fallback marker, got %#v", got)
+	}
+}
+
+func TestEnsureThemesFilePreservesExistingAndAddsStarters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "themes.toml")
+	original := "[themes.custom]\nselected_background = \"#abcdef\"\n"
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Default()
+	cfg.Themes.ThemeFile = path
+	if err := EnsureThemesFile(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(got), original) {
+		t.Fatalf("existing theme was not preserved: %q", got)
+	}
+	if !strings.Contains(string(got), "[themes.cyberpunk]") {
+		t.Fatal("missing starter theme migration")
+	}
+}
+
+func TestEnsureThemesFileCreatesDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "themes.toml")
+	cfg := Default()
+	cfg.Themes.ThemeFile = path
+	if err := EnsureThemesFile(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateThemeFile(cfg); err != nil {
+		t.Fatalf("created themes file should validate: %v", err)
+	}
+}
+
+func TestThemeNamesAndSetThemeName(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := EnsureConfig(false); err != nil {
+		t.Fatal(err)
+	}
+	names, err := ThemeNames(Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 10 || names[0] != "terminal" {
+		t.Fatalf("theme names = %#v, want terminal plus nine starters", names)
+	}
+	if err := SetThemeName("neovim"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Themes.ThemeName != "neovim" {
+		t.Fatalf("theme name = %q, want neovim", cfg.Themes.ThemeName)
 	}
 }
 

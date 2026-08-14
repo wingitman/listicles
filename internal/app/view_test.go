@@ -177,9 +177,10 @@ func TestRenderNode_CollapsedDirIcon(t *testing.T) {
 func TestRenderNode_FileNoDirectionIcon(t *testing.T) {
 	m := newViewModel(nil)
 	m.width = 80
+	m.cursor = 1 // keep this file row unselected; ▶ is also the cursor marker
 	node := TreeNode{Entry: makeEntry("file.txt", false), Depth: 0}
 	out := m.renderNode(0, node, 0, 0)
-	// Files should have neither ▶ nor ▼
+	// Unselected files should have neither a cursor nor a direction icon.
 	if strings.Contains(out, "▶") || strings.Contains(out, "▼") {
 		t.Errorf("file node should not have direction icons, got:\n%s", out)
 	}
@@ -221,6 +222,9 @@ func TestRenderNode_SelectedHighlight_PaddedToWidth(t *testing.T) {
 	// We can't check exact ANSI, but we can verify the node renders without panic
 	if out == "" {
 		t.Error("selected node rendered as empty string")
+	}
+	if !strings.Contains(out, "▶") {
+		t.Errorf("selected node should include a visible cursor marker, got:\n%s", out)
 	}
 }
 

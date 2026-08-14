@@ -46,6 +46,7 @@ install:
 		chmod +x $(INSTALL_DIR)/$(BINARY); \
 		echo "    Installed pre-built binary."; \
 	fi
+	@"$(INSTALL_DIR)/$(BINARY)" --ensure-config
 	@echo "Installed: $(INSTALL_DIR)/$(BINARY)"
 	@echo ""
 	@$(MAKE) --no-print-directory install-shell

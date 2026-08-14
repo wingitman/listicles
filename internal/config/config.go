@@ -2,8 +2,10 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -49,6 +51,7 @@ type Keybinds struct {
 	Plugins          string `toml:"plugins"`
 	PreviewToggle    string `toml:"preview_toggle"`
 	PreviewMode      string `toml:"preview_mode"`
+	Theme            string `toml:"theme"`
 }
 
 // Display holds display preferences.
@@ -80,6 +83,48 @@ type Plugins struct {
 	Zoxide bool `toml:"zoxide"`
 }
 
+// Themes selects a shared theme and contains optional per-app overrides.
+type Themes struct {
+	ThemeName          string `toml:"theme_name"`
+	ThemeFile          string `toml:"theme_file"`
+	Foreground         string `toml:"foreground"`
+	Background         string `toml:"background"`
+	Primary            string `toml:"primary"`
+	Accent             string `toml:"accent"`
+	Muted              string `toml:"muted"`
+	Error              string `toml:"error"`
+	Success            string `toml:"success"`
+	File               string `toml:"file"`
+	Border             string `toml:"border"`
+	SelectedBackground string `toml:"selected_background"`
+	SelectedForeground string `toml:"selected_foreground"`
+	HeaderBackground   string `toml:"header_background"`
+	HintKey            string `toml:"hint_key"`
+	ParentCrumb        string `toml:"parent_crumb"`
+	RootDirectory      string `toml:"root_directory"`
+	Clipboard          string `toml:"clipboard"`
+	BrandPrimary       string `toml:"brand_primary"`
+	BrandSecondary     string `toml:"brand_secondary"`
+	Selector           string `toml:"selector"`
+	ImageBackground    string `toml:"image_background"`
+}
+
+// Theme is the portable subset currently consumed by listicles.
+type Theme struct {
+	Themes
+}
+
+type themeFile struct {
+	Themes map[string]Theme `toml:"themes"`
+}
+
+// ResolvedTheme describes the selection style after applying shared and local
+// configuration. Terminal means that no explicit base colors should be used.
+type ResolvedTheme struct {
+	Colors   map[string]string
+	Terminal bool
+}
+
 // Config is the root config struct.
 type Config struct {
 	Keybinds Keybinds `toml:"keybinds"`
@@ -87,6 +132,7 @@ type Config struct {
 	Apps     Apps     `toml:"apps"`
 	Updates  Updates  `toml:"updates"`
 	Plugins  Plugins  `toml:"plugins"`
+	Themes   Themes   `toml:"themes"`
 }
 
 // keybindEntries is the single authoritative list of every keybind TOML key
@@ -130,6 +176,7 @@ var keybindEntries = []struct{ key, comment string }{
 	{"plugins", "show optional plugin integrations"},
 	{"preview_toggle", "toggle file/image preview panel"},
 	{"preview_mode", "swap image / details in preview panel"},
+	{"theme", "open theme picker"},
 }
 
 // displayEntries is the authoritative list of every display TOML key, used for
@@ -160,6 +207,11 @@ var pluginEntries = []string{
 	"fd",
 	"rg",
 	"zoxide",
+}
+
+var themeEntries = []string{
+	"theme_name",
+	"theme_file",
 }
 
 // Default returns a Config with all default values.
@@ -202,6 +254,7 @@ func Default() *Config {
 			Plugins:          "P",
 			PreviewToggle:    "v",
 			PreviewMode:      "V",
+			Theme:            "T",
 		},
 		Display: Display{
 			ShowHidden:       false,
@@ -223,6 +276,10 @@ func Default() *Config {
 			Fd:     true,
 			Rg:     true,
 			Zoxide: true,
+		},
+		Themes: Themes{
+			ThemeName: "terminal",
+			ThemeFile: filepath.Join(ConfigDir(), "themes.toml"),
 		},
 	}
 }
@@ -250,6 +307,407 @@ func ConfigPath() string {
 	return filepath.Join(ConfigDir(), "listicles.toml")
 }
 
+// ThemeFilePath expands the configured theme file path. A leading ~/ is
+// resolved against the current user's home directory.
+func ThemeFilePath(cfg *Config) string {
+	if cfg == nil || strings.TrimSpace(cfg.Themes.ThemeFile) == "" {
+		return filepath.Join(ConfigDir(), "themes.toml")
+	}
+	path := strings.TrimSpace(cfg.Themes.ThemeFile)
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimLeft(path[1:], `/\`))
+		}
+	}
+	return filepath.Clean(path)
+}
+
+// EnsureThemesFile creates the shared theme file if it is missing. Existing
+// files are never overwritten, including during a factory reset.
+func EnsureThemesFile(cfg *Config) error {
+	path := ThemeFilePath(cfg)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err == nil {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		updated := appendMissingStarterThemes(string(data))
+		if updated == string(data) {
+			return nil
+		}
+		return os.WriteFile(path, []byte(updated), 0644)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(path, []byte(defaultThemesTOML), 0644)
+}
+
+// ThemeNames returns terminal plus all named themes in the shared file.
+func ThemeNames(cfg *Config) ([]string, error) {
+	var file themeFile
+	if _, err := toml.DecodeFile(ThemeFilePath(cfg), &file); err != nil {
+		return []string{"terminal"}, err
+	}
+	names := []string{"terminal"}
+	for name := range file.Themes {
+		names = append(names, name)
+	}
+	sort.Strings(names[1:])
+	return names, nil
+}
+
+// SetThemeName updates only the selected theme in listicles.toml.
+func SetThemeName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("theme name cannot be empty")
+	}
+	if err := EnsureConfig(false); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		return err
+	}
+	content := setSectionKey(string(data), "themes", "theme_name", quote(name))
+	return os.WriteFile(ConfigPath(), []byte(content), 0644)
+}
+
+func appendMissingStarterThemes(content string) string {
+	for _, name := range starterThemeNames {
+		header := "[themes." + name + "]"
+		if strings.Contains(content, header) {
+			continue
+		}
+		block := starterThemeBlock(name)
+		if block == "" {
+			continue
+		}
+		if strings.TrimSpace(content) != "" && !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += "\n" + block + "\n"
+	}
+	return content
+}
+
+func starterThemeBlock(name string) string {
+	start := strings.Index(defaultThemesTOML, "[themes."+name+"]")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(defaultThemesTOML[start:], "\n\n[themes.")
+	if end < 0 {
+		return strings.TrimSpace(defaultThemesTOML[start:])
+	}
+	return strings.TrimSpace(defaultThemesTOML[start : start+end])
+}
+
+// ValidateThemeFile checks the configured shared file without changing it.
+// Runtime loading remains forgiving and uses the built-in theme on failure.
+func ValidateThemeFile(cfg *Config) error {
+	path := ThemeFilePath(cfg)
+	var file themeFile
+	if _, err := toml.DecodeFile(path, &file); err != nil {
+		return fmt.Errorf("invalid themes file %q: %w", path, err)
+	}
+	if len(file.Themes) == 0 {
+		return fmt.Errorf("themes file %q contains no [themes.<name>] entries", path)
+	}
+	return nil
+}
+
+// ResolveTheme loads the selected shared theme and applies local overrides.
+// A zero-valued result means the caller should use its built-in fallback.
+func ResolveTheme(cfg *Config) ResolvedTheme {
+	if cfg == nil {
+		return ResolvedTheme{}
+	}
+	result := ResolvedTheme{Colors: map[string]string{}, Terminal: cfg.Themes.ThemeName == "terminal"}
+	if !result.Terminal {
+		var file themeFile
+		if _, err := toml.DecodeFile(ThemeFilePath(cfg), &file); err != nil {
+			return ResolvedTheme{}
+		}
+		selected, ok := file.Themes[cfg.Themes.ThemeName]
+		if !ok {
+			return ResolvedTheme{}
+		}
+		result.Colors = themeColors(selected.Themes)
+		if len(result.Colors) == 0 {
+			return ResolvedTheme{}
+		}
+	}
+	for key, value := range themeColors(cfg.Themes) {
+		result.Colors[key] = value
+	}
+	return result
+}
+
+func themeColors(t Themes) map[string]string {
+	values := map[string]string{
+		"foreground":          t.Foreground,
+		"background":          t.Background,
+		"primary":             t.Primary,
+		"accent":              t.Accent,
+		"muted":               t.Muted,
+		"error":               t.Error,
+		"success":             t.Success,
+		"file":                t.File,
+		"border":              t.Border,
+		"selected_background": t.SelectedBackground,
+		"selected_foreground": t.SelectedForeground,
+		"header_background":   t.HeaderBackground,
+		"hint_key":            t.HintKey,
+		"parent_crumb":        t.ParentCrumb,
+		"root_directory":      t.RootDirectory,
+		"clipboard":           t.Clipboard,
+		"brand_primary":       t.BrandPrimary,
+		"brand_secondary":     t.BrandSecondary,
+		"selector":            t.Selector,
+		"image_background":    t.ImageBackground,
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		if validThemeColor(value) {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+func validThemeColor(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if len(value) != 4 && len(value) != 7 {
+		return false
+	}
+	if value[0] != '#' {
+		return false
+	}
+	for _, c := range value[1:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+var starterThemeNames = []string{
+	"ocean", "high_contrast", "redteam", "blueteam", "vim", "neovim",
+	"monotone", "cyberpunk", "sands",
+}
+
+const defaultThemesTOML = `# Shared themes for Delbysoft terminal applications.
+# Add themes as [themes.name] tables. Colors use #RGB or #RRGGBB values.
+# Supported colors: foreground, background, primary, accent, muted, error,
+# success, file, border, selected_background, selected_foreground,
+# header_background, hint_key, parent_crumb, root_directory, clipboard,
+# brand_primary, brand_secondary, selector, image_background.
+
+[themes.ocean]
+foreground = "#D7E3FF"
+background = "#101522"
+primary = "#7C9EF0"
+accent = "#F0A47C"
+muted = "#66708F"
+error = "#F07C7C"
+success = "#7CF09C"
+file = "#B0B0CC"
+border = "#35415F"
+selected_background = "#3568B8"
+selected_foreground = "#FFFFFF"
+header_background = "#17213A"
+hint_key = "#FFE66D"
+parent_crumb = "#58627F"
+root_directory = "#7D88A8"
+clipboard = "#F0E07C"
+brand_primary = "#FFFFFF"
+brand_secondary = "#6F86FF"
+selector = "#FFFFFF"
+image_background = "#101522"
+
+[themes.high_contrast]
+foreground = "#FFFFFF"
+background = "#000000"
+primary = "#00FFFF"
+accent = "#FFFF00"
+muted = "#C0C0C0"
+error = "#FF5555"
+success = "#00FF00"
+file = "#FFFFFF"
+border = "#FFFFFF"
+selected_background = "#FFFF00"
+selected_foreground = "#000000"
+header_background = "#000000"
+hint_key = "#FFFF00"
+parent_crumb = "#C0C0C0"
+root_directory = "#FFFFFF"
+clipboard = "#FFFF00"
+brand_primary = "#FFFFFF"
+brand_secondary = "#00FFFF"
+selector = "#FFFF00"
+image_background = "#000000"
+
+[themes.redteam]
+foreground = "#FFE8E8"
+background = "#210B0B"
+primary = "#FF6B6B"
+accent = "#FFB86B"
+muted = "#A97878"
+error = "#FF3333"
+success = "#8BE28B"
+file = "#F2CACA"
+border = "#713333"
+selected_background = "#9E2020"
+selected_foreground = "#FFFFFF"
+header_background = "#3A1010"
+hint_key = "#FFD166"
+parent_crumb = "#805555"
+root_directory = "#C88A8A"
+clipboard = "#FFD166"
+brand_primary = "#FFFFFF"
+brand_secondary = "#FF4D4D"
+selector = "#FFFFFF"
+image_background = "#210B0B"
+
+[themes.blueteam]
+foreground = "#E7F1FF"
+background = "#081525"
+primary = "#69A7FF"
+accent = "#72E0D1"
+muted = "#6D86A5"
+error = "#FF7B8B"
+success = "#7DDEB3"
+file = "#C4D8F2"
+border = "#294C75"
+selected_background = "#1557A5"
+selected_foreground = "#FFFFFF"
+header_background = "#0D223D"
+hint_key = "#F4D35E"
+parent_crumb = "#4D6888"
+root_directory = "#8BA9CB"
+clipboard = "#F4D35E"
+brand_primary = "#FFFFFF"
+brand_secondary = "#69A7FF"
+selector = "#FFFFFF"
+image_background = "#081525"
+
+[themes.vim]
+foreground = "#D7D7AF"
+background = "#1C1C1C"
+primary = "#87AF87"
+accent = "#D7AF5F"
+muted = "#808080"
+error = "#AF5F5F"
+success = "#87AF87"
+file = "#D7D7AF"
+border = "#5F5F5F"
+selected_background = "#5F5F00"
+selected_foreground = "#FFFFAF"
+header_background = "#262626"
+hint_key = "#FFFF87"
+parent_crumb = "#5F875F"
+root_directory = "#AFAF87"
+clipboard = "#D7AF5F"
+brand_primary = "#FFFFFF"
+brand_secondary = "#87AF87"
+selector = "#FFFFAF"
+image_background = "#1C1C1C"
+
+[themes.neovim]
+foreground = "#C8D3F5"
+background = "#1B1D2B"
+primary = "#82AAFF"
+accent = "#FFC777"
+muted = "#828BB8"
+error = "#FF757F"
+success = "#C3E88D"
+file = "#C8D3F5"
+border = "#444A73"
+selected_background = "#394B70"
+selected_foreground = "#FFFFFF"
+header_background = "#222436"
+hint_key = "#FFCB6B"
+parent_crumb = "#545C8C"
+root_directory = "#A9B8E8"
+clipboard = "#C3E88D"
+brand_primary = "#FFFFFF"
+brand_secondary = "#82AAFF"
+selector = "#FFFFFF"
+image_background = "#1B1D2B"
+
+[themes.monotone]
+foreground = "#D0D0D0"
+background = "#202020"
+primary = "#E0E0E0"
+accent = "#FFFFFF"
+muted = "#808080"
+error = "#B0B0B0"
+success = "#D8D8D8"
+file = "#C0C0C0"
+border = "#606060"
+selected_background = "#D0D0D0"
+selected_foreground = "#101010"
+header_background = "#303030"
+hint_key = "#FFFFFF"
+parent_crumb = "#707070"
+root_directory = "#A0A0A0"
+clipboard = "#FFFFFF"
+brand_primary = "#FFFFFF"
+brand_secondary = "#A0A0A0"
+selector = "#FFFFFF"
+image_background = "#202020"
+
+[themes.cyberpunk]
+foreground = "#F4E8FF"
+background = "#170D24"
+primary = "#00E5FF"
+accent = "#FFEA00"
+muted = "#9B75B5"
+error = "#FF3864"
+success = "#39FF14"
+file = "#E6CFFF"
+border = "#7A2F9B"
+selected_background = "#D100A8"
+selected_foreground = "#FFFFFF"
+header_background = "#28113C"
+hint_key = "#FFEA00"
+parent_crumb = "#754D91"
+root_directory = "#C68AF0"
+clipboard = "#FFEA00"
+brand_primary = "#FFFFFF"
+brand_secondary = "#00E5FF"
+selector = "#FFFFFF"
+image_background = "#170D24"
+
+[themes.sands]
+foreground = "#F3E7CE"
+background = "#282016"
+primary = "#E4B96A"
+accent = "#F2D06B"
+muted = "#9F8B6D"
+error = "#D9795B"
+success = "#A8B875"
+file = "#E8D6B5"
+border = "#6D583C"
+selected_background = "#A66A2C"
+selected_foreground = "#FFF4D6"
+header_background = "#382A1B"
+hint_key = "#F2D06B"
+parent_crumb = "#806B4E"
+root_directory = "#CBAE7A"
+clipboard = "#F2D06B"
+brand_primary = "#FFF4D6"
+brand_secondary = "#E4B96A"
+selector = "#FFF4D6"
+image_background = "#282016"
+`
+
 // Load reads the config file, creating it with defaults if it doesn't exist.
 func Load() (*Config, error) {
 	cfg := Default()
@@ -259,10 +717,12 @@ func Load() (*Config, error) {
 		if err := EnsureConfig(false); err != nil {
 			return cfg, nil
 		}
+		_ = EnsureThemesFile(cfg)
 		return cfg, nil
 	}
 
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
+		_ = EnsureThemesFile(cfg)
 		return Default(), err
 	}
 
@@ -280,11 +740,18 @@ func Load() (*Config, error) {
 	if cfg.Display.DefaultListMode == "" {
 		cfg.Display.DefaultListMode = "dirs_and_files"
 	}
+	if cfg.Themes.ThemeName == "" {
+		cfg.Themes.ThemeName = "terminal"
+	}
+	if cfg.Themes.ThemeFile == "" {
+		cfg.Themes.ThemeFile = filepath.Join(ConfigDir(), "themes.toml")
+	}
 
 	// Migration: add only missing keys, preserving user values and existing text.
 	if needsMigration(path) {
 		_ = EnsureConfig(false) // non-fatal
 	}
+	_ = EnsureThemesFile(cfg) // themes are optional at runtime; built-in fallback remains available
 
 	return cfg, nil
 }
@@ -438,6 +905,11 @@ func needsMigration(path string) bool {
 			return true
 		}
 	}
+	for _, key := range themeEntries {
+		if !fileContainsKeyInSection(content, "themes", key) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -452,6 +924,22 @@ func fileContainsKey(content, key string) bool {
 			continue
 		}
 		if strings.HasPrefix(trimmed, key+"=") || strings.HasPrefix(trimmed, key+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func fileContainsKeyInSection(content, section, key string) bool {
+	inSection := false
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inSection = trimmed == "["+section+"]"
+			continue
+		}
+		if inSection && !strings.HasPrefix(trimmed, "#") &&
+			(strings.HasPrefix(trimmed, key+"=") || strings.HasPrefix(trimmed, key+" ")) {
 			return true
 		}
 	}
@@ -477,11 +965,17 @@ func EnsureConfig(resetDefault bool) error {
 		return err
 	}
 	if resetDefault {
-		return WriteDefault(path)
+		if err := WriteDefault(path); err != nil {
+			return err
+		}
+		return EnsureThemesFile(Default())
 	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return WriteDefault(path)
+		if err := WriteDefault(path); err != nil {
+			return err
+		}
+		return EnsureThemesFile(Default())
 	}
 	if err != nil {
 		return err
@@ -489,9 +983,20 @@ func EnsureConfig(resetDefault bool) error {
 	content := string(data)
 	updated := ensureMissingConfigKeys(content)
 	if updated == content {
-		return nil
+		cfg := Default()
+		if _, decodeErr := toml.Decode(content, cfg); decodeErr != nil {
+			cfg = Default()
+		}
+		return EnsureThemesFile(cfg)
 	}
-	return os.WriteFile(path, []byte(updated), 0644)
+	if err := os.WriteFile(path, []byte(updated), 0644); err != nil {
+		return err
+	}
+	cfg := Default()
+	if _, decodeErr := toml.Decode(updated, cfg); decodeErr != nil {
+		cfg = Default()
+	}
+	return EnsureThemesFile(cfg)
 }
 
 func ensureMissingConfigKeys(content string) string {
@@ -500,6 +1005,7 @@ func ensureMissingConfigKeys(content string) string {
 	content = ensureSectionEntries(content, "apps", appsDefaultLines())
 	content = ensureSectionEntries(content, "updates", updatesDefaultLines())
 	content = ensureSectionEntries(content, "plugins", pluginsDefaultLines())
+	content = ensureSectionEntries(content, "themes", themeDefaultLines())
 	return content
 }
 
@@ -626,6 +1132,14 @@ func pluginsDefaultLines() map[string]string {
 	}
 }
 
+func themeDefaultLines() map[string]string {
+	d := Default().Themes
+	return map[string]string{
+		"theme_name": "theme_name = " + quote(d.ThemeName),
+		"theme_file": "theme_file = " + quote(d.ThemeFile),
+	}
+}
+
 // SetPluginEnabled updates one plugin toggle in the user's config file.
 func SetPluginEnabled(name string, enabled bool) error {
 	switch name {
@@ -707,6 +1221,7 @@ func buildTOML(cfg *Config) string {
 	a := cfg.Apps
 	u := cfg.Updates
 	p := cfg.Plugins
+	t := cfg.Themes
 
 	// Find longest key name for column alignment.
 	maxLen := 0
@@ -748,6 +1263,31 @@ func buildTOML(cfg *Config) string {
 		"fd = " + boolStr(p.Fd) + "   # use fd for full name search when installed\n" +
 		"rg = " + boolStr(p.Rg) + "   # use rg for full content search when installed\n" +
 		"zoxide = " + boolStr(p.Zoxide) + "   # use zoxide for -z directory search when installed\n"
+
+	out += "\n[themes]\n" +
+		"theme_name = " + quote(t.ThemeName) + "   # terminal, or a named theme from theme_file\n" +
+		"theme_file = " + quote(t.ThemeFile) + "   # shared Delbysoft theme file\n" +
+		"# Optional overrides applied after the selected theme.\n" +
+		"# foreground = \"#ffffff\"\n" +
+		"# background = \"#000000\"\n" +
+		"# primary = \"#7C9EF0\"\n" +
+		"# accent = \"#F0A47C\"\n" +
+		"# muted = \"#666688\"\n" +
+		"# error = \"#F07C7C\"\n" +
+		"# success = \"#7CF09C\"\n" +
+		"# file = \"#B0B0CC\"\n" +
+		"# border = \"#444466\"\n" +
+		"# selected_background = \"#cd0fc1\"\n" +
+		"# selected_foreground = \"#EEEEFF\"\n" +
+		"# header_background = \"#1A1A2E\"\n" +
+		"# hint_key = \"#FFE66D\"\n" +
+		"# parent_crumb = \"#3A3A5A\"\n" +
+		"# root_directory = \"#555577\"\n" +
+		"# clipboard = \"#F0E07C\"\n" +
+		"# brand_primary = \"#FFFFFF\"\n" +
+		"# brand_secondary = \"#5865F2\"\n" +
+		"# selector = \"#FFFFFF\"\n" +
+		"# image_background = \"#1A1A2E\"\n"
 
 	return out
 }
@@ -792,6 +1332,7 @@ func keybindValues(k *Keybinds) map[string]string {
 		"plugins":            k.Plugins,
 		"preview_toggle":     k.PreviewToggle,
 		"preview_mode":       k.PreviewMode,
+		"theme":              k.Theme,
 	}
 }
 
