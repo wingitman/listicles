@@ -2,6 +2,7 @@ package update
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -256,17 +257,154 @@ func writeUnixScript(req InstallRequest) (string, error) {
 }
 
 func launchWindows(req InstallRequest) error {
+	terminalName := strings.TrimSuffix(strings.ToLower(filepath.Base(req.Terminal)), ".exe")
+	customTerminal := req.Terminal != "" && terminalName != "cmd" && terminalName != "powershell" && terminalName != "pwsh"
+	// A binary on PATH may still be denied by AppLocker or domain script policy.
+	// Probe an actual file, under normal policy, rather than bypassing policy.
+	shell := ""
+	if terminalName != "cmd" {
+		shell = usablePowerShell(func(ctx context.Context, name string, args ...string) error {
+			return exec.CommandContext(ctx, name, args...).Run()
+		})
+	}
+	if shell == "" {
+		script, err := writeCMDScript(req)
+		if err != nil {
+			return err
+		}
+		if terminalName == "wt" {
+			return exec.Command(req.Terminal, "cmd.exe", "/d", "/v:off", "/k", script).Start()
+		}
+		if customTerminal {
+			return exec.Command(req.Terminal, script).Start()
+		}
+		return startCMDConsole(script)
+	}
 	script, err := writeWindowsScript(req)
 	if err != nil {
 		return err
 	}
-	if req.Terminal != "" {
+	if terminalName == "wt" {
+		return exec.Command(req.Terminal, shell, "-NoProfile", "-NoExit", "-File", script).Start()
+	}
+	if customTerminal {
 		return exec.Command(req.Terminal, script).Start()
 	}
 	if _, err := exec.LookPath("wt.exe"); err == nil {
-		return exec.Command("wt.exe", "powershell.exe", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", script).Start()
+		return exec.Command("wt.exe", shell, "-NoProfile", "-NoExit", "-File", script).Start()
 	}
-	return exec.Command("powershell.exe", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", script).Start()
+	return exec.Command(shell, "-NoProfile", "-NoExit", "-File", script).Start()
+}
+
+func usablePowerShell(run func(context.Context, string, ...string) error) string {
+	probe, err := os.CreateTemp("", "listicles-probe-*.ps1")
+	if err != nil {
+		return ""
+	}
+	defer os.Remove(probe.Name())
+	_, writeErr := probe.WriteString("exit 0\r\n")
+	closeErr := probe.Close()
+	if writeErr != nil || closeErr != nil {
+		return ""
+	}
+	for _, shell := range []string{"powershell.exe", "pwsh.exe"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := run(ctx, shell, "-NoProfile", "-NonInteractive", "-File", probe.Name())
+		cancel()
+		if err == nil {
+			return shell
+		}
+	}
+	return ""
+}
+
+// Batch SET values must be literal, single-line, quoted strings. Percent signs
+// are doubled in script source; delayed expansion stays disabled throughout.
+func cmdValue(value string) (string, error) {
+	if strings.ContainsAny(value, "\x00\r\n\"") {
+		return "", errors.New("invalid quote or control character in CMD update argument")
+	}
+	return strings.ReplaceAll(value, "%", "%%"), nil
+}
+
+func writeCMDScript(req InstallRequest) (string, error) {
+	values := []string{req.RepoPath, req.TargetCommit, req.RecorderBinary}
+	for i, value := range values {
+		literal, err := cmdValue(value)
+		if err != nil {
+			return "", err
+		}
+		values[i] = literal
+	}
+	latest := ""
+	if req.Latest {
+		latest = "1"
+	}
+	content := fmt.Sprintf(`@echo off
+setlocal EnableExtensions DisableDelayedExpansion
+chcp 65001 >nul
+set "repo=%s"
+set "target=%s"
+set "recorder=%s"
+set "latest=%s"
+pushd "%%repo%%" || goto failed
+set "restore="
+for /f "delims=" %%%%R in ('git symbolic-ref --quiet --short HEAD 2^>nul') do set "restore=%%%%R"
+if not defined restore for /f "delims=" %%%%R in ('git rev-parse HEAD') do set "restore=%%%%R"
+if not defined restore goto failed_pop
+git fetch --prune --all || goto failed_pop
+if not defined latest goto checkout
+git rev-parse --abbrev-ref --symbolic-full-name "@{u}" >nul 2>&1
+if errorlevel 1 goto no_upstream
+git pull --ff-only || goto failed_pop
+goto install
+:no_upstream
+set "branch="
+for /f "delims=" %%%%R in ('git symbolic-ref --quiet --short HEAD 2^>nul') do set "branch=%%%%R"
+if not defined branch goto checkout
+git merge --ff-only "origin/%%branch%%" || goto failed_pop
+goto install
+:checkout
+if not defined target goto failed_pop
+git checkout --detach "%%target%%" || goto failed_pop
+:install
+if not exist install.cmd (
+    echo ERROR: This revision has no install.cmd. CMD installation of older revisions is unsupported.
+    goto failed_pop
+)
+call install.cmd
+if errorlevel 1 goto failed_pop
+set "installed="
+for /f "delims=" %%%%R in ('git rev-parse HEAD') do set "installed=%%%%R"
+if not defined installed goto failed_pop
+if defined recorder (
+    "%%recorder%%" --record-update --update-commit "%%installed%%" --update-repo "%%repo%%"
+    if errorlevel 1 goto failed_pop
+)
+git checkout "%%restore%%" || goto failed_pop
+popd
+echo listicles update complete: %%installed%%
+pause
+exit /b 0
+:failed_pop
+if defined restore git checkout "%%restore%%"
+popd
+:failed
+echo ERROR: Update failed. Review the output above; no automatic retry was attempted.
+pause
+exit /b 1
+`, values[0], values[1], values[2], latest)
+	file, err := os.CreateTemp("", "listicles-update-*.cmd")
+	if err != nil {
+		return "", err
+	}
+	_, writeErr := file.WriteString(strings.ReplaceAll(content, "\n", "\r\n"))
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		os.Remove(file.Name())
+		return "", errors.Join(writeErr, closeErr)
+	}
+	return file.Name(), nil
 }
 
 func writeWindowsScript(req InstallRequest) (string, error) {
@@ -286,7 +424,9 @@ $recorder = %s
 $latest = %s
 Set-Location $repo
 $prevRef = (git rev-parse --abbrev-ref HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Could not determine the original checkout.' }
 git fetch --prune --all
+if ($LASTEXITCODE -ne 0) { throw 'Git fetch failed.' }
 if ($latest) {
     if ($prevRef -ne 'HEAD') {
         git rev-parse --abbrev-ref --symbolic-full-name '@{u}' *> $null
@@ -297,10 +437,19 @@ if ($latest) {
 } else {
     git checkout --detach $target
 }
+if ($LASTEXITCODE -ne 0) { throw 'Git update failed; installation was not attempted.' }
 & .\install.ps1 -Update
+if ($LASTEXITCODE -ne 0) { throw 'listicles installation failed; update metadata was not recorded.' }
 $installed = (git rev-parse HEAD).Trim()
-if ($recorder -and (Test-Path $recorder)) { & $recorder --record-update --update-commit $installed --update-repo $repo }
-if ($prevRef -ne 'HEAD') { git checkout $prevRef | Out-Null }
+if ($LASTEXITCODE -ne 0) { throw 'Could not determine the installed commit.' }
+if ($recorder -and (Test-Path $recorder)) {
+    & $recorder --record-update --update-commit $installed --update-repo $repo
+    if ($LASTEXITCODE -ne 0) { throw 'Could not record update metadata.' }
+}
+if ($prevRef -ne 'HEAD') {
+    git checkout $prevRef | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not restore the original checkout.' }
+}
 Write-Host ""
 Write-Host "listicles update complete: $installed" -ForegroundColor Green
 Read-Host 'Press Enter to close'

@@ -11,7 +11,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss
 ## Requirements
 
 - A terminal with colour support
-- `bash`, `zsh`, `fish`, or `powershell (pwsh)`
+- `bash`, `zsh`, `fish`, PowerShell, or Windows Command Prompt (`cmd.exe`)
 
 **Optional plugins:** [`fd`](https://github.com/sharkdp/fd) for faster name search, [`rg`](https://github.com/BurntSushi/ripgrep) for content search, and [`zoxide`](https://github.com/ajeetdsouza/zoxide) for known-directory search.
 
@@ -19,7 +19,73 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and [Lipgloss
 
 ## Install
 
-### Windows
+### Windows — Command Prompt (no PowerShell required)
+
+**Developers with Go installed** (use the Go version required by `go.mod`):
+
+```bat
+git clone https://github.com/wingitman/listicles.git
+cd listicles
+install.cmd
+```
+
+The installer builds the current checkout when Go is on PATH. A failed build
+stops installation; it never silently falls back to an older release. Git is
+optional for installation from an extracted ZIP; without Git, build metadata
+uses `dev`.
+
+**Binary users without Go or Git:** download this repository using **Code →
+Download ZIP** on GitHub and extract it. Keep `install.cmd`, `uninstall.cmd`,
+`shell\`, and `releases\windows\listicles.exe` in their original relative
+locations. Open Command Prompt in the extracted directory and run:
+
+```bat
+install.cmd
+```
+
+With no Go on PATH, the installer uses the bundled **Windows x64** release.
+It reports an error if the binary is missing or the machine needs a different
+architecture; install Go to build natively on other Windows architectures.
+An `.exe` by itself can run, but the installer and shell files are needed for
+automatic `l` and PATH setup.
+
+**Both routes:** install `listicles.exe` and `l.cmd` into
+`%LOCALAPPDATA%\Programs\listicles`, or replace an existing PATH-resolved
+`listicles.exe` in its current directory. Close listicles before reinstalling.
+The executable is staged, checked byte-for-byte, and renamed into place; an
+unwritable destination is an error, not a reason to create a competing install.
+The installer adds its directory to your user PATH without admin rights,
+PowerShell, profile edits, CMD AutoRun hooks, or `setx`.
+
+To use it **immediately in the current prompt**, run the `set` command printed
+by the installer (normally the following), then `l`:
+
+```bat
+set "PATH=%LOCALAPPDATA%\Programs\listicles;%PATH%"
+l
+```
+
+For every terminal to inherit the persistent PATH change, sign out of Windows
+and back in. Simply opening a tab in an existing terminal may retain its old
+PATH. Use `where l` and `where listicles.exe` to investigate command conflicts.
+CMD PATH editing deliberately refuses very large values rather than risking
+truncation; if it reports that error, use Windows **Environment Variables →
+User variables → Path** to add the printed install directory manually. Domain
+restrictions on registry writes or executable/batch execution still apply.
+
+Installation creates/migrates `%APPDATA%\delbysoft\listicles.toml` and the shared
+`themes.toml`, using the same defaults as other installers and preserving
+existing settings. On Windows this is the roaming AppData directory, not a
+literal `~\delbysoft` directory. To explicitly reset app settings:
+
+```bat
+install.cmd --default
+```
+
+Keep the extracted installer files for reinstall/uninstall; the installed `l`
+wrapper itself does not depend on the checkout remaining in place.
+
+### Windows — PowerShell
 
 ```powershell
 git clone https://github.com/wingitman/listicles.git
@@ -27,7 +93,7 @@ cd listicles
 .\install.ps1
 ```
 
-This builds the binary, installs it to `%LOCALAPPDATA%\Programs\listicles\`, adds that directory to your user PATH (registry, no admin required), and patches your PowerShell `$PROFILE` with the `l` function.
+This builds the binary when Go is available (otherwise uses `releases\windows\listicles.exe`), installs it to `%LOCALAPPDATA%\Programs\listicles\`, adds that directory to your user PATH (registry, no admin required), and patches your PowerShell `$PROFILE` with the `l` function.
 
 Open a new PowerShell terminal and type `l`.
 
@@ -56,7 +122,27 @@ Use [listicles.nvim](https://github.com/wingitman/listicles.nvim) in Neovim!
 
 ## Uninstall
 
-### Windows
+### Windows — Command Prompt
+
+From the extracted repository:
+
+```bat
+uninstall.cmd
+```
+
+Removes `listicles.exe`, `l.cmd`, and the default install directory's user PATH
+entry. Config and shared themes are preserved. Sign out and back in to refresh
+PATH everywhere. If installation replaced a command in another directory, pass
+that directory explicitly:
+
+```bat
+uninstall.cmd "C:\my-tools"
+```
+
+For a custom/shared directory, only the two commands are removed; its PATH entry
+and other files remain. Neither CMD script changes your PowerShell profile.
+
+### Windows — PowerShell
 
 ```powershell
 .\uninstall.ps1
@@ -306,11 +392,19 @@ search        = "/"
 ---
 
 ## Shell integration
-`l` is a shell function (not an alias or script) that passes a temp file path to the binary. When you select a directory and press `c`, listicles writes the path to that file. The function reads it and calls `cd`. This is the only way to change the parent shell's directory — a subprocess can't do it.
+`l` is a shell function, or a batch wrapper under Command Prompt, that passes a temp file path to the binary. When you select a directory and press `c`, listicles writes the path to that file. The wrapper reads it and calls `cd` in the calling shell — a subprocess alone can't change its parent's directory.
 
 Same pattern as `ranger`, `nnn`, and `zoxide`.
 
 **Manual setup** (if `make install` didn't cover your shell):
+
+**Command Prompt:** copy `shell\l.cmd` alongside `listicles.exe` in a directory
+on PATH. No profile or `doskey` macro is required. `l` forwards arguments, uses
+`cd /d` to switch drives as well as directories, and cleans up its temporary
+cd-file. Use normal CMD with delayed expansion disabled (`cmd /v:off`) when
+working with directory names containing `!`. UNC shares must first be mapped
+to a drive, since CMD cannot use a UNC path as its current directory. From
+another batch script, use `call l` so execution returns to your script.
 
 ```bash
 # bash / zsh
@@ -369,13 +463,69 @@ go build -ldflags='-s -w' -o bin\listicles.exe .   # build only
 Remove-Item -Recurse bin\                            # clean
 ```
 
-Cross-compile:
+**Windows (Command Prompt)**
+
+```bat
+go build -ldflags="-s -w" -o bin\listicles.exe .
+install.cmd
+go test ./internal/... -timeout 30s
+uninstall.cmd
+rmdir /s /q bin
+```
+
+To build the bundled Windows x64 release from CMD without installing it:
+
+```bat
+set GOOS=windows
+set GOARCH=amd64
+go build -ldflags="-s -w" -o releases\windows\listicles.exe .
+set GOOS=
+set GOARCH=
+```
+
+Cross-compile from macOS/Linux:
 
 ```bash
 GOOS=darwin  GOARCH=arm64 go build -o bin/listicles-macos-arm64 .
 GOOS=linux   GOARCH=amd64 go build -o bin/listicles-linux-amd64 .
 GOOS=windows GOARCH=amd64 go build -o bin/listicles-windows.exe .
 ```
+
+### Windows updates without PowerShell
+
+The in-app updater probes PowerShell by running a harmless script with no
+profile and a five-second timeout per candidate (`powershell.exe`, then
+`pwsh.exe`). Finding the executable is not enough: launch or script-policy
+denial causes a fallback to a native CMD update window running `install.cmd`.
+It does not use `-ExecutionPolicy Bypass`. To select CMD directly without
+probing PowerShell, set `terminal = "cmd.exe"` in `[updates]` in your config.
+
+CMD updates support latest and rollback installations and stop on failed Git,
+build, or config commands. Rollback to a revision predating `install.cmd` is
+reported as unsupported. Automatic updates require Git, even with a prebuilt
+binary and no Go. Without Git, download a fresh ZIP and rerun `install.cmd`.
+A probe cannot guarantee that domain policy permits every later operation;
+failures remain visible in the update window and are not retried automatically.
+The fallback is in newly built binaries; older bundled binaries must be
+refreshed before their in-app updater gains this behavior.
+
+### Installer verification (Windows)
+
+The CMD regression suite temporarily edits the current user's registry PATH
+and restores it afterward. Run it only in a disposable Windows account/VM:
+
+```bat
+set LISTICLES_CMD_TESTS=1
+go test ./tests ./internal/update -v -timeout 60s
+set LISTICLES_CMD_TESTS=
+```
+
+It covers source/release installation, failure handling, config preservation
+and reset, PATH preservation/oversize refusal, `l`, uninstall, update scripts,
+and detached CMD launch. Installer tests use a fake build executable and the
+real config implementation; also smoke-test a real Go build and bundled release
+on your Windows/domain setup. Wine can exercise these tests, but is not a
+substitute for native Windows policy and console verification.
 
 ---
 
