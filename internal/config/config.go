@@ -508,7 +508,7 @@ func validThemeColor(value string) bool {
 
 var starterThemeNames = []string{
 	"ocean", "high_contrast", "redteam", "blueteam", "vim", "neovim",
-	"monotone", "cyberpunk", "sands",
+	"monotone", "cyberpunk", "sands", "nord", "gruvbox", "dracula", "solarized",
 }
 
 const defaultThemesTOML = `# Shared themes for Delbysoft terminal applications.
@@ -715,6 +715,94 @@ brand_primary = "#FFF4D6"
 brand_secondary = "#E4B96A"
 selector = "#FFF4D6"
 image_background = "#282016"
+
+[themes.nord]
+foreground = "#D8DEE9"
+background = "#2E3440"
+primary = "#88C0D0"
+accent = "#EBCB8B"
+muted = "#7B88A1"
+error = "#BF616A"
+success = "#A3BE8C"
+file = "#D8DEE9"
+border = "#4C566A"
+selected_background = "#5E81AC"
+selected_foreground = "#ECEFF4"
+header_background = "#3B4252"
+hint_key = "#EBCB8B"
+parent_crumb = "#81A1C1"
+root_directory = "#8FBCBB"
+clipboard = "#EBCB8B"
+brand_primary = "#ECEFF4"
+brand_secondary = "#88C0D0"
+selector = "#ECEFF4"
+image_background = "#2E3440"
+
+[themes.gruvbox]
+foreground = "#EBDBB2"
+background = "#282828"
+primary = "#83A598"
+accent = "#FABD2F"
+muted = "#928374"
+error = "#FB4934"
+success = "#B8BB26"
+file = "#D5C4A1"
+border = "#665C54"
+selected_background = "#458588"
+selected_foreground = "#FBF1C7"
+header_background = "#3C3836"
+hint_key = "#FABD2F"
+parent_crumb = "#A89984"
+root_directory = "#8EC07C"
+clipboard = "#FE8019"
+brand_primary = "#FBF1C7"
+brand_secondary = "#D3869B"
+selector = "#FBF1C7"
+image_background = "#282828"
+
+[themes.dracula]
+foreground = "#F8F8F2"
+background = "#282A36"
+primary = "#BD93F9"
+accent = "#FFB86C"
+muted = "#6272A4"
+error = "#FF5555"
+success = "#50FA7B"
+file = "#F8F8F2"
+border = "#44475A"
+selected_background = "#6272A4"
+selected_foreground = "#FFFFFF"
+header_background = "#343746"
+hint_key = "#F1FA8C"
+parent_crumb = "#8BE9FD"
+root_directory = "#50FA7B"
+clipboard = "#FFB86C"
+brand_primary = "#F8F8F2"
+brand_secondary = "#FF79C6"
+selector = "#FFFFFF"
+image_background = "#282A36"
+
+[themes.solarized]
+foreground = "#839496"
+background = "#002B36"
+primary = "#268BD2"
+accent = "#B58900"
+muted = "#586E75"
+error = "#DC322F"
+success = "#859900"
+file = "#93A1A1"
+border = "#365F67"
+selected_background = "#075A6A"
+selected_foreground = "#FDF6E3"
+header_background = "#073642"
+hint_key = "#B58900"
+parent_crumb = "#2AA198"
+root_directory = "#6C9C9A"
+clipboard = "#CB4B16"
+brand_primary = "#FDF6E3"
+brand_secondary = "#2AA198"
+selector = "#FDF6E3"
+image_background = "#002B36"
 `
 
 // Load reads the config file, creating it with defaults if it doesn't exist.

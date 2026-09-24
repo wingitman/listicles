@@ -353,7 +353,8 @@ theme. If the shared file or selected theme is unavailable, listicles uses its
 built-in fallback theme.
 
 The generated file also includes `redteam`, `blueteam`, `vim`, `neovim`,
-`monotone`, `cyberpunk`, and `sands`. Each theme supports the complete shared
+`monotone`, `cyberpunk`, `sands`, `nord`, `gruvbox`, `dracula`, and
+`solarized`. Each theme supports the complete shared
 palette: text, accents, errors, success, borders, selection, headers, crumbs,
 clipboard, branding, selector, and image colors.
 

@@ -231,8 +231,8 @@ func TestThemeNamesAndSetThemeName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(names) != 10 || names[0] != "terminal" {
-		t.Fatalf("theme names = %#v, want terminal plus nine starters", names)
+	if len(names) != 14 || names[0] != "terminal" {
+		t.Fatalf("theme names = %#v, want terminal plus thirteen starters", names)
 	}
 	if err := SetThemeName("neovim"); err != nil {
 		t.Fatal(err)
