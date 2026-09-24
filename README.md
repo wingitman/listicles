@@ -210,7 +210,7 @@ Multi-digit jump: type digits within 500ms. The number being typed shows in the 
 | `.` | Toggle hidden files |
 | `i` | Cycle detail: none → count → size → full path |
 | `/` | Search (live filter as you type) |
-| `Enter` (in search) | Run full search via `fd`/`rg`, or navigate live `zoxide` results |
+| `Enter` (in search) | Run full search via `fd`/`rg` or native fallback, or navigate live `zoxide` results |
 | `Esc` (in search) | Cancel |
 | `U` | Show updates, recent changes, and install history commits |
 | `P` | Show plugins and toggle optional integrations |
@@ -218,11 +218,21 @@ Multi-digit jump: type digits within 500ms. The number being typed shows in the 
 | `o` | Open config in `$EDITOR` |
 | `q` / `Esc` | Quit |
 
+In Recents and Bookmarks, `Tab` moves forward and `Shift+Tab` moves backward;
+`g` toggles project/global scope. Set `display.recents_global = true` or
+`display.bookmarks_global = true` to start those views globally.
+
 **Search flags** (add to your query): `-r` recursive, `-t` search file contents (or `-rt` for both), `-z` live-search zoxide's known directories. When `-z` is present, `-r` and `-t` are ignored.
 Example: `main -rt` finds files containing the word `main`, recursively.
 Example: `.conf -r` find files/directories containing '.conf', recursively. 
 Example: `system32` find file/directories containing 'system32' in this directory
 Example: `proj -z` searches zoxide's directory database as you type.
+
+`fd`, `rg`, and `zoxide` are optional accelerators. Without them, listicles
+uses native Go filesystem/content search, including on Windows CMD. If you
+want `fd` on Windows, the package is **sharkdp.fd** (`winget install
+sharkdp.fd`), or use the official ZIP release. On Linux, the package is
+usually named `fd` (Debian/Ubuntu call it `fd-find`, with a `fdfind` binary).
 
 ---
 

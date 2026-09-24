@@ -235,6 +235,34 @@ func TestRun_NameSearch_FindsMatch(t *testing.T) {
 	}
 }
 
+func TestRun_NativeFallbacks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "top.txt"), []byte("needle here\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "nested", "deep.txt"), []byte("needle below\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tools := Tools{}
+	var names []Result
+	if err := Run(tools, Request{Dir: dir, Query: "deep", Recursive: true}, func(r Result) { names = append(names, r) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0].Path != filepath.Join(dir, "nested", "deep.txt") {
+		t.Fatalf("native name search = %#v", names)
+	}
+	var text []Result
+	if err := Run(tools, Request{Dir: dir, Query: "needle", Recursive: true, TextMode: true}, func(r Result) { text = append(text, r) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(text) != 2 || text[0].LineNum != 1 {
+		t.Fatalf("native text search = %#v", text)
+	}
+}
+
 func TestRun_EmptyQuery_NoResults(t *testing.T) {
 	dir := t.TempDir()
 	tools := DetectTools()

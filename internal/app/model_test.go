@@ -101,6 +101,18 @@ func TestNew_InitialisesTree(t *testing.T) {
 	}
 }
 
+func TestMoveCursor_SkipsGroupHeadersInBothDirections(t *testing.T) {
+	m := &Model{nodes: []TreeNode{{IsGroupHeader: true}, {}, {IsGroupHeader: true}, {}}, cursor: 3}
+	m.moveCursor(-1)
+	if m.cursor != 1 {
+		t.Fatalf("up landed at %d, want 1", m.cursor)
+	}
+	m.moveCursor(1)
+	if m.cursor != 3 {
+		t.Fatalf("down landed at %d, want 3", m.cursor)
+	}
+}
+
 func TestNew_EmptyDir(t *testing.T) {
 	m, _ := newModelWithDirs(t) // no subdirs
 	if len(m.nodes) != 0 {

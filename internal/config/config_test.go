@@ -42,6 +42,7 @@ func TestDefault_FieldValues(t *testing.T) {
 		{"ToggleHidden", cfg.Keybinds.ToggleHidden, "."},
 		{"Search", cfg.Keybinds.Search, "/"},
 		{"SwitchTabs", cfg.Keybinds.SwitchTabs, "\t"},
+		{"SwitchTabsBack", cfg.Keybinds.SwitchTabsBack, "shift+tab"},
 		{"SwitchTabsGlobal", cfg.Keybinds.SwitchTabsGlobal, "g"},
 		{"Ignore", cfg.Keybinds.Ignore, "I"},
 		{"FullSearch", cfg.Keybinds.FullSearch, "ctrl+f"},
@@ -68,6 +69,9 @@ func TestDefault_FieldValues(t *testing.T) {
 	}
 	if cfg.Display.ShowHidden {
 		t.Error("ShowHidden should default to false")
+	}
+	if cfg.Display.RecentsGlobal || cfg.Display.BookmarksGlobal {
+		t.Error("global Recents/Bookmarks should be opt-in by default")
 	}
 	if cfg.Apps.Editor != "" || cfg.Apps.Opener != "" {
 		t.Error("Apps.Editor and Apps.Opener should be empty by default")

@@ -1446,22 +1446,22 @@ func (m Model) renderStatusBar() string {
 	if m.mode == ModeRecents {
 		switch m.hintsMode {
 		case HintsNavigation:
-			return render(withMore([]string{"[" + k.switchTabs + "]Bookmarks", "[" + k.switchTabsGlobal + "]Global", "[Esc]Back"}))
+			return render(withMore([]string{"[" + k.switchTabs + "]Bookmarks", "[" + k.switchTabsBack + "]Files", "[" + k.switchTabsGlobal + "]Global", "[" + k.cdDir + "]Cd", "[Esc]Back"}))
 		case HintsActions:
 			return render(withMore([]string{"[" + k.delete + "]Remove", "[" + k.quit + "]Back"}))
 		default:
-			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Open", "[" + k.delete + "]Remove", "[Esc]Back"}))
+			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Open", "[" + k.cdDir + "]Cd", "[" + k.delete + "]Remove", "[Esc]Back"}))
 		}
 	}
 
 	if m.mode == ModeBookmarks {
 		switch m.hintsMode {
 		case HintsNavigation:
-			return render(withMore([]string{"[" + k.switchTabsGlobal + "]Global", "[" + k.switchTabs + "]Close", "[Esc]Back"}))
+			return render(withMore([]string{"[" + k.switchTabsBack + "]Recents", "[" + k.switchTabs + "]Files", "[" + k.switchTabsGlobal + "]Global", "[" + k.cdDir + "]Cd", "[Esc]Back"}))
 		case HintsActions:
 			return render(withMore([]string{"[" + k.bookmark + "]Add", "[" + k.delete + "]Remove", "[" + k.rename + "]Rename"}))
 		default:
-			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Open", "[" + k.delete + "]Remove", "[Esc]Back"}))
+			return render(withMore([]string{"[" + k.up + "/" + k.down + "]Nav", "[" + k.confirm + "]Open", "[" + k.cdDir + "]Cd", "[" + k.delete + "]Remove", "[Esc]Back"}))
 		}
 	}
 

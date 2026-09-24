@@ -1,10 +1,11 @@
 // Package search runs filesystem and content searches, preferring rg/fd/zoxide
-// when available and falling back to POSIX find/grep.
+// when available and using native Go fallbacks otherwise.
 package search
 
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,17 +109,7 @@ func runNameSearch(t Tools, req Request, emit func(Result)) error {
 		args = append(args, "--glob", "*"+req.Query+"*", req.Dir)
 		cmd = exec.Command("fd", args...)
 	} else {
-		// POSIX find fallback
-		args := []string{req.Dir}
-		if !req.Recursive {
-			args = append(args, "-maxdepth", "1")
-		}
-		args = append(args, "-iname", "*"+req.Query+"*")
-		if !req.Hidden {
-			// Exclude hidden entries
-			args = append([]string{req.Dir, "-not", "-path", "*/.*"}, args[1:]...)
-		}
-		cmd = exec.Command("find", args...)
+		return runNativeNameSearch(req, emit)
 	}
 
 	return streamLines(cmd, req.Dir, func(line string) {
@@ -150,30 +141,7 @@ func runTextSearch(t Tools, req Request, emit func(Result)) error {
 		args = append(args, req.Query, req.Dir)
 		cmd = exec.Command("rg", args...)
 	} else {
-		// grep fallback
-		args := []string{"-rn", "--include=*"}
-		if !req.Recursive {
-			// grep has no maxdepth; use find+grep pipeline via shell
-			// For simplicity, use -r on the dir but limit with find piped in
-			args = []string{"-n"}
-			// We'll just grep non-recursively against files in dir
-			entries, _ := os.ReadDir(req.Dir)
-			var files []string
-			for _, e := range entries {
-				if !e.IsDir() {
-					files = append(files, filepath.Join(req.Dir, e.Name()))
-				}
-			}
-			if len(files) == 0 {
-				return nil
-			}
-			args = append(args, req.Query)
-			args = append(args, files...)
-			cmd = exec.Command("grep", args...)
-		} else {
-			args = append(args, req.Query, req.Dir)
-			cmd = exec.Command("grep", args...)
-		}
+		return runNativeTextSearch(req, emit)
 	}
 
 	if t.HasRg {
@@ -194,6 +162,93 @@ func runTextSearch(t Tools, req Request, emit func(Result)) error {
 			emit(r)
 		}
 	})
+}
+
+// Native fallbacks avoid shell commands, so search works on minimal Windows
+// installs where neither PowerShell nor the optional tools are available.
+func runNativeNameSearch(req Request, emit func(Result)) error {
+	query := strings.ToLower(req.Query)
+	return filepath.WalkDir(req.Dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == req.Dir {
+			return nil
+		}
+		rel, _ := filepath.Rel(req.Dir, path)
+		if !req.Hidden && hasHiddenComponent(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !req.Recursive && filepath.Dir(rel) != "." {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.Contains(strings.ToLower(d.Name()), query) {
+			emit(Result{Path: path})
+		}
+		return nil
+	})
+}
+
+func runNativeTextSearch(req Request, emit func(Result)) error {
+	return filepath.WalkDir(req.Dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == req.Dir {
+			return nil
+		}
+		rel, _ := filepath.Rel(req.Dir, path)
+		if !req.Hidden && hasHiddenComponent(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			if !req.Recursive && filepath.Dir(rel) != "." {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			return nil
+		}
+		if !req.Recursive && filepath.Dir(rel) != "." {
+			return nil
+		}
+		f, openErr := os.Open(path)
+		if openErr != nil {
+			return nil
+		}
+		defer f.Close()
+		s := bufio.NewScanner(f)
+		lineNum := 0
+		for s.Scan() {
+			lineNum++
+			if strings.Contains(s.Text(), req.Query) {
+				emit(Result{Path: path, Line: s.Text(), LineNum: lineNum})
+			}
+		}
+		if err := s.Err(); err != nil && err != io.EOF {
+			return nil
+		}
+		return nil
+	})
+}
+
+func hasHiddenComponent(rel string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if strings.HasPrefix(part, ".") && part != "." {
+			return true
+		}
+	}
+	return false
 }
 
 type rgJSONLine struct {

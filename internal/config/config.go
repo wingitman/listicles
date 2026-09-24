@@ -40,6 +40,7 @@ type Keybinds struct {
 	ToggleHidden     string `toml:"toggle_hidden"`
 	Search           string `toml:"search"`
 	SwitchTabs       string `toml:"switch_tabs"`
+	SwitchTabsBack   string `toml:"switch_tabs_back"`
 	SwitchTabsGlobal string `toml:"switch_tabs_global"`
 	Ignore           string `toml:"ignore"`
 	FullSearch       string `toml:"full_search"`
@@ -60,6 +61,8 @@ type Display struct {
 	DefaultListMode  string `toml:"default_list_mode"` // "dirs" | "dirs_and_files"
 	SearchMaxResults int    `toml:"search_max_results"`
 	ParentDepth      int    `toml:"parent_depth"`
+	RecentsGlobal    bool   `toml:"recents_global"`
+	BookmarksGlobal  bool   `toml:"bookmarks_global"`
 }
 
 // Apps holds default application overrides.
@@ -165,6 +168,7 @@ var keybindEntries = []struct{ key, comment string }{
 	{"toggle_hidden", "toggle hidden files"},
 	{"search", "open live search bar"},
 	{"switch_tabs", "switch tabs (Recents / Bookmarks)"},
+	{"switch_tabs_back", "switch tabs backwards (Shift+Tab)"},
 	{"switch_tabs_global", "toggle global scope in Recents/Bookmarks"},
 	{"ignore", "add to .gitignore (git repos only)"},
 	{"full_search", "re-run full fd/rg search"},
@@ -186,6 +190,8 @@ var displayEntries = []string{
 	"default_list_mode",
 	"search_max_results",
 	"parent_depth",
+	"recents_global",
+	"bookmarks_global",
 }
 
 // appEntries is the authoritative list of every [apps] TOML key.
@@ -243,6 +249,7 @@ func Default() *Config {
 			ToggleHidden:     ".",
 			Search:           "/",
 			SwitchTabs:       "\t",
+			SwitchTabsBack:   "shift+tab",
 			SwitchTabsGlobal: "g",
 			Ignore:           "I",
 			FullSearch:       "ctrl+f",
@@ -261,6 +268,8 @@ func Default() *Config {
 			DefaultListMode:  "dirs_and_files",
 			SearchMaxResults: 20,
 			ParentDepth:      1,
+			RecentsGlobal:    false,
+			BookmarksGlobal:  false,
 		},
 		Apps: Apps{
 			Editor: "",
@@ -767,6 +776,9 @@ func applyKeybindDefaults(cfg *Config) {
 	if cfg.Keybinds.Down == "" {
 		cfg.Keybinds.Down = d.Down
 	}
+	if cfg.Keybinds.SwitchTabsBack == "" {
+		cfg.Keybinds.SwitchTabsBack = d.SwitchTabsBack
+	}
 	if cfg.Keybinds.Left == "" {
 		cfg.Keybinds.Left = d.Left
 	}
@@ -1102,6 +1114,8 @@ func displayDefaultLines() map[string]string {
 		"default_list_mode":  "default_list_mode = " + quote(d.DefaultListMode),
 		"search_max_results": "search_max_results = " + itoa(d.SearchMaxResults),
 		"parent_depth":       "parent_depth = " + itoa(d.ParentDepth),
+		"recents_global":     "recents_global = " + boolStr(d.RecentsGlobal),
+		"bookmarks_global":   "bookmarks_global = " + boolStr(d.BookmarksGlobal),
 	}
 }
 
@@ -1246,6 +1260,8 @@ func buildTOML(cfg *Config) string {
 	out += "\n[display]\n" +
 		"show_hidden       = " + boolStr(d.ShowHidden) + "\n" +
 		"default_list_mode = " + quote(d.DefaultListMode) + "   # \"dirs\" or \"dirs_and_files\"\n\n" +
+		"recents_global    = " + boolStr(d.RecentsGlobal) + "   # show all projects in Recents by default\n" +
+		"bookmarks_global  = " + boolStr(d.BookmarksGlobal) + "   # show all projects in Bookmarks by default\n\n" +
 		"# Max results shown during live / subprocess search (min 1)\n" +
 		"search_max_results = " + itoa(d.SearchMaxResults) + "\n\n" +
 		"# Greyed-out ancestor directories shown above the tree.\n" +
@@ -1321,6 +1337,7 @@ func keybindValues(k *Keybinds) map[string]string {
 		"toggle_hidden":      k.ToggleHidden,
 		"search":             k.Search,
 		"switch_tabs":        k.SwitchTabs,
+		"switch_tabs_back":   k.SwitchTabsBack,
 		"switch_tabs_global": k.SwitchTabsGlobal,
 		"ignore":             k.Ignore,
 		"full_search":        k.FullSearch,

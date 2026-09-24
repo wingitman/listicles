@@ -194,8 +194,10 @@ type Model struct {
 	gitignorePatterns []string
 
 	// App state (recents + bookmarks), persisted to state.json
-	appState   *state.State
-	stateScope bool // false = project-scoped, true = global
+	appState        *state.State
+	stateScope      bool // false = project-scoped, true = global
+	recentsGlobal   bool
+	bookmarksGlobal bool
 
 	// Update state
 	updateInfo     appupdate.Info
@@ -242,6 +244,7 @@ type resolvedKeys struct {
 	toggleHidden     string
 	searchKey        string
 	switchTabs       string
+	switchTabsBack   string
 	switchTabsGlobal string
 	ignore           string
 	fullSearch       string
@@ -295,6 +298,7 @@ func resolveKeys(k config.Keybinds) resolvedKeys {
 		toggleHidden:     k.ToggleHidden,
 		searchKey:        k.Search,
 		switchTabs:       k.SwitchTabs,
+		switchTabsBack:   k.SwitchTabsBack,
 		switchTabsGlobal: k.SwitchTabsGlobal,
 		ignore:           k.Ignore,
 		fullSearch:       k.FullSearch,
@@ -342,6 +346,8 @@ func New(cfg *config.Config, startDir string, cdFile string, openFile string) (*
 		rootDir:           startDir,
 		listMode:          listModeFromConfig(cfg),
 		showHidden:        cfg.Display.ShowHidden,
+		recentsGlobal:     cfg.Display.RecentsGlobal,
+		bookmarksGlobal:   cfg.Display.BookmarksGlobal,
 		textInput:         ti,
 		keys:              resolveKeys(cfg.Keybinds),
 		searchTools:       toolsForConfig(installedTools, cfg),
@@ -1079,20 +1085,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Cycle to bookmarks.
 				m.enterBookmarks()
 				return m, nil
+			case matchKey(key, m.keys.switchTabsBack):
+				m.restoreFromTab()
+				return m, nil
 			case matchKey(key, m.keys.switchTabsGlobal):
 				m.stateScope = !m.stateScope
+				m.recentsGlobal = m.stateScope
 				m.populateRecents()
 				return m, nil
 			case matchKey(key, m.keys.up):
-				m.cursor--
-				m.clampCursorSkipHeaders()
+				m.moveCursor(-1)
 				m.adjustOffset()
 				return m, nil
 			case matchKey(key, m.keys.down):
-				m.cursor++
-				m.clampCursorSkipHeaders()
+				m.moveCursor(1)
 				m.adjustOffset()
 				return m, nil
+			case matchKey(key, m.keys.cdDir):
+				e := m.selectedEntry()
+				if e == nil {
+					return m, nil
+				}
+				if e.IsDir() {
+					return m, m.exitWithDir(e.Path)
+				}
+				return m, m.exitWithDir(filepath.Dir(e.Path))
 			case matchKey(key, m.keys.confirm):
 				e := m.selectedEntry()
 				if e == nil {
@@ -1107,7 +1124,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.mode = ModeNormal
 					return m, nil
 				}
-				return m, m.exitWithFile(e.Path)
+				if m.openFile != "" {
+					return m, m.exitWithFile(e.Path)
+				}
+				return m, m.openEditor(e.Path)
 			case matchKey(key, m.keys.delete):
 				e := m.selectedEntry()
 				if e != nil && m.appState != nil {
@@ -1130,20 +1150,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Cycle back to normal.
 				m.restoreFromTab()
 				return m, nil
+			case matchKey(key, m.keys.switchTabsBack):
+				m.enterRecents()
+				return m, nil
 			case matchKey(key, m.keys.switchTabsGlobal):
 				m.stateScope = !m.stateScope
+				m.bookmarksGlobal = m.stateScope
 				m.populateBookmarks()
 				return m, nil
 			case matchKey(key, m.keys.up):
-				m.cursor--
-				m.clampCursorSkipHeaders()
+				m.moveCursor(-1)
 				m.adjustOffset()
 				return m, nil
 			case matchKey(key, m.keys.down):
-				m.cursor++
-				m.clampCursorSkipHeaders()
+				m.moveCursor(1)
 				m.adjustOffset()
 				return m, nil
+			case matchKey(key, m.keys.cdDir):
+				e := m.selectedEntry()
+				if e == nil {
+					return m, nil
+				}
+				if e.IsDir() {
+					return m, m.exitWithDir(e.Path)
+				}
+				return m, m.exitWithDir(filepath.Dir(e.Path))
 			case matchKey(key, m.keys.confirm):
 				e := m.selectedEntry()
 				if e == nil {
@@ -1158,7 +1189,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.mode = ModeNormal
 					return m, nil
 				}
-				return m, m.exitWithFile(e.Path)
+				if m.openFile != "" {
+					return m, m.exitWithFile(e.Path)
+				}
+				return m, m.openEditor(e.Path)
 			case matchKey(key, m.keys.delete):
 				e := m.selectedEntry()
 				if e != nil && m.appState != nil {
@@ -1958,6 +1992,8 @@ func (m *Model) applyConfig(cfg *config.Config) error {
 	applyTheme(cfg)
 	m.keys = resolveKeys(cfg.Keybinds)
 	m.showHidden = cfg.Display.ShowHidden
+	m.recentsGlobal = cfg.Display.RecentsGlobal
+	m.bookmarksGlobal = cfg.Display.BookmarksGlobal
 	m.listMode = listModeFromConfig(cfg)
 	m.installedTools = search.DetectTools()
 	m.searchTools = toolsForConfig(m.installedTools, cfg)
@@ -2647,14 +2683,14 @@ func (m *Model) enterRecents() {
 	m.prevNodes = make([]TreeNode, len(m.nodes))
 	copy(m.prevNodes, m.nodes)
 	m.prevRootDir = m.rootDir
-	m.stateScope = false
+	m.stateScope = m.recentsGlobal
 	m.populateRecents()
 	m.mode = ModeRecents
 }
 
 // enterBookmarks switches from ModeRecents to ModeBookmarks (snapshot already saved).
 func (m *Model) enterBookmarks() {
-	m.stateScope = false
+	m.stateScope = m.bookmarksGlobal
 	m.populateBookmarks()
 	m.mode = ModeBookmarks
 }
@@ -2787,6 +2823,28 @@ func (m *Model) clampCursorSkipHeaders() {
 		m.cursor = n - 1
 		for m.cursor > 0 && m.nodes[m.cursor].IsGroupHeader {
 			m.cursor--
+		}
+	}
+}
+
+// moveCursor skips separator rows in the direction of travel. This avoids
+// clamping an upward move back below a group header.
+func (m *Model) moveCursor(delta int) {
+	if len(m.nodes) == 0 || delta == 0 {
+		return
+	}
+	for {
+		m.cursor += delta
+		if m.cursor < 0 {
+			m.cursor = 0
+			return
+		}
+		if m.cursor >= len(m.nodes) {
+			m.cursor = len(m.nodes) - 1
+			return
+		}
+		if !m.nodes[m.cursor].IsGroupHeader {
+			return
 		}
 	}
 }
